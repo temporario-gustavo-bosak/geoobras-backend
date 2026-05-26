@@ -149,8 +149,8 @@ def test_insights_triggers_exactly_one_fetch(client: TestClient) -> None:
 
     assert response.status_code == 200
     mock_fetch.assert_called_once()
-    # Service must receive the pre-fetched obra — no separate self-fetch needed
-    mock_insight.assert_called_once_with(VALID_ID, obra=obra)
+    # Service must receive the pre-fetched obra and the default persona
+    mock_insight.assert_called_once_with(VALID_ID, obra=obra, persona="auditor")
 
 
 def test_insights_missing_obra_returns_404_and_service_not_called(client: TestClient) -> None:
@@ -179,3 +179,36 @@ def test_insights_llm_down_returns_200_fallback_via_consolidated_fetch(client: T
 
     assert response.status_code == 200
     assert response.json()["fonte"] == "fallback"
+
+
+# ---------------------------------------------------------------------------
+# D-01: persona parameter tests
+# ---------------------------------------------------------------------------
+
+
+def test_insights_persona_auditor_returns_200(client: TestClient) -> None:
+    """Happy: ?persona=auditor is the default and must return 200."""
+    with (
+        patch("src.api.main.fetch_obra_insights", return_value=_mock_obra()),
+        patch("src.api.main.get_obra_insight", return_value=_insight_llm()),
+    ):
+        response = client.get(f"/api/v1/obras/{VALID_ID}/insights?persona=auditor")
+
+    assert response.status_code == 200
+
+
+def test_insights_persona_cidadao_returns_200(client: TestClient) -> None:
+    """Happy: ?persona=cidadao must also return 200."""
+    with (
+        patch("src.api.main.fetch_obra_insights", return_value=_mock_obra()),
+        patch("src.api.main.get_obra_insight", return_value=_insight_llm()),
+    ):
+        response = client.get(f"/api/v1/obras/{VALID_ID}/insights?persona=cidadao")
+
+    assert response.status_code == 200
+
+
+def test_insights_invalid_persona_returns_422(client: TestClient) -> None:
+    """Edge: unknown persona value → FastAPI Enum validation returns 422."""
+    response = client.get(f"/api/v1/obras/{VALID_ID}/insights?persona=xpto")
+    assert response.status_code == 422

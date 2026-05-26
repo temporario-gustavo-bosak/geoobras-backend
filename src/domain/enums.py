@@ -6,6 +6,11 @@ Enumerações de domínio: status de obra, fonte de dados, etc.
 from enum import Enum
 
 
+class Persona(str, Enum):
+    AUDITOR = "auditor"
+    CIDADAO = "cidadao"
+
+
 class StatusObra(str, Enum):
     PLANEJADA = "planejada"
     EM_EXECUCAO = "em_execucao"
