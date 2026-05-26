@@ -200,6 +200,14 @@ def _match_score(gov: dict, tce: dict) -> float:
     return 0.60 * nome + 0.20 * data + 0.20 * valor
 
 
+def _normalize_contract_num(n: object) -> str | None:
+    """Normaliza número de contrato para comparação: strip + upper. Retorna None se vazio."""
+    if not n:
+        return None
+    s = str(n).strip().upper()
+    return s or None
+
+
 # ---------------------------------------------------------------------------
 # Normalização de obras ObrasGov
 # ---------------------------------------------------------------------------
@@ -350,6 +358,7 @@ def _build_obra_from_tcerj_paralisada(row: dict) -> dict:
         "longitude": None,
         "geom": None,
         "fonte_principal": FontePrincipal.TCE.value,
+        "_numero_contrato": _normalize_contract_num(row.get("numero_contrato")),
         "_contratos_raw": [],
     }
 
@@ -364,14 +373,29 @@ def _build_obra_from_tcerj_paralisada(row: dict) -> dict:
 SIMILARITY_THRESHOLD = 0.35
 
 
+def _build_contract_index(obras_gov: list[dict]) -> dict[str, dict]:
+    """
+    Índice {numero_contrato_normalizado: obra_gov} construído uma vez antes do loop.
+    Permite lookup O(1) durante o matching determinístico.
+    Apenas o primeiro ObrasGov encontrado por número de contrato é indexado.
+    """
+    index: dict[str, dict] = {}
+    for obra in obras_gov:
+        for c in obra.get("_contratos_raw") or []:
+            n = _normalize_contract_num(c.get("numero_contrato"))
+            if n and n not in index:
+                index[n] = obra
+    return index
+
+
 def _match_obrasgov_com_tcerj(
     obras_gov: list[dict],
     obras_tce: list[dict],
 ) -> list[dict]:
     """
-    Para cada obra TCE, tenta encontrar correspondente ObrasGov usando
-    score multi-campo (nome, data, valor). Quando há match, associa
-    id_obras_tce e marca fonte como 'mista'.
+    Para cada obra TCE, tenta encontrar correspondente ObrasGov em duas etapas:
+    1. Determinístico: número de contrato em comum → score 1.0, fuzzy ignorado.
+    2. Fuzzy (fallback): score ponderado nome/data/valor quando não há chave determinística.
     Obras TCE sem match são incluídas como novas entradas.
 
     IMPORTANTE: compara TCE apenas contra ObrasGov (não contra outras TCE).
@@ -379,16 +403,32 @@ def _match_obrasgov_com_tcerj(
     matched_tce_ids: set[int] = set()
     result = list(obras_gov)  # começa com todas as obras ObrasGov
 
+    # Índice de contratos ObrasGov construído uma única vez
+    contract_index = _build_contract_index(obras_gov)
+
     for tce in obras_tce:
         melhor_score = 0.0
         melhor_gov = None
 
-        # Compara apenas contra obras ObrasGov, não contra o result inteiro
-        for gov in obras_gov:
-            score = _match_score(gov, tce)
-            if score > melhor_score:
-                melhor_score = score
-                melhor_gov = gov
+        # --- Etapa 1: matching determinístico por número de contrato ---
+        tce_num = _normalize_contract_num(tce.get("_numero_contrato"))
+        if tce_num and tce_num in contract_index:
+            melhor_gov = contract_index[tce_num]
+            melhor_score = 1.0
+            logger.info(
+                "Match determinístico por contrato '%s': TCE '%s' ↔ GOV '%s'",
+                tce_num,
+                (tce.get("nome") or "")[:60],
+                (melhor_gov.get("nome") or "")[:60],
+            )
+        else:
+            # --- Etapa 2: fallback fuzzy ---
+            # Compara apenas contra obras ObrasGov, não contra o result inteiro
+            for gov in obras_gov:
+                score = _match_score(gov, tce)
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_gov = gov
 
         if melhor_gov and melhor_score >= SIMILARITY_THRESHOLD:
             melhor_gov["id_obras_tce"] = tce.get("id_obras_tce")
