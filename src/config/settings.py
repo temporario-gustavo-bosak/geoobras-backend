@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     HTTP_TIMEOUT: float = 30.0  # segundos por requisição
     HTTP_MAX_RETRIES: int = 3
 
+    # ------------------------------------------------------------------
+    # LLM (insights endpoint — degrades gracefully when key is absent)
+    # ------------------------------------------------------------------
+    LLM_API_KEY: str = ""  # never log this value
+    LLM_MODEL: str = "claude-opus-4-7"
+    LLM_BASE_URL: str = "https://api.anthropic.com/v1/messages"
+    LLM_TIMEOUT: float = 60.0
+    LLM_MAX_TOKENS: int = 1024
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
