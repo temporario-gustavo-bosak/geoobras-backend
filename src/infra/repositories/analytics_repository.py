@@ -30,7 +30,11 @@ def fetch_obras_para_analytics(session: Session) -> list[dict]:
             o.data_inicio,
             o.data_fim_prevista,
             o.data_fim_real,
-            o.status_obra
+            o.status_obra,
+            o.latitude,
+            o.longitude,
+            o.geom,
+            o.bairro
         FROM clean.obras o
     """)
     rows = session.execute(sql).mappings().all()
@@ -105,21 +109,48 @@ def upsert_metrica(session: Session, m: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 UPSERT_RECORRENCIA = text("""
-    INSERT INTO analytics.recorrencia_territorial (id_obra_geoobras, bairro, geom)
-    VALUES (:id_obra, :bairro, :geom)
+    INSERT INTO analytics.recorrencia_territorial (
+        id_obra_geoobras, bairro, geom,
+        qtd_obras_proximas, qtd_bairro, flag_recorrencia,
+        raio_metros, janela_anos
+    ) VALUES (
+        :id_obra, :bairro, :geom,
+        :qtd_proximas, :qtd_bairro, :flag_recorrencia,
+        :raio_metros, :janela_anos
+    )
     ON CONFLICT (id_obra_geoobras) DO UPDATE SET
-        bairro = EXCLUDED.bairro,
-        geom   = EXCLUDED.geom
+        bairro             = EXCLUDED.bairro,
+        geom               = EXCLUDED.geom,
+        qtd_obras_proximas = EXCLUDED.qtd_obras_proximas,
+        qtd_bairro         = EXCLUDED.qtd_bairro,
+        flag_recorrencia   = EXCLUDED.flag_recorrencia,
+        raio_metros        = EXCLUDED.raio_metros,
+        janela_anos        = EXCLUDED.janela_anos
 """)
 
 
-def upsert_recorrencia_territorial(session: Session, id_obra: UUID | str, bairro: str | None, geom: str | None) -> None:
+def upsert_recorrencia_territorial(
+    session: Session,
+    id_obra: UUID | str,
+    bairro: str | None,
+    geom: str | None,
+    qtd_proximas: int = 1,
+    qtd_bairro: int = 1,
+    flag_recorrencia: bool = False,
+    raio_metros: float = 50.0,
+    janela_anos: int = 10,
+) -> None:
     session.execute(
         UPSERT_RECORRENCIA,
         {
             "id_obra": str(id_obra),
             "bairro": bairro,
             "geom": geom,
+            "qtd_proximas": qtd_proximas,
+            "qtd_bairro": qtd_bairro,
+            "flag_recorrencia": flag_recorrencia,
+            "raio_metros": raio_metros,
+            "janela_anos": janela_anos,
         },
     )
 
