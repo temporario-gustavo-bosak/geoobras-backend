@@ -47,22 +47,33 @@ UPSERT_METRICA = text("""
         valor_total_contratado, valor_pago_acumulado,
         percentual_desembolso, percentual_fisico,
         data_inicio, data_fim_prevista, data_fim_real,
-        dias_atraso, flag_possivel_atraso, calculado_em
+        dias_atraso, flag_possivel_atraso,
+        divergencia_fisico_financeira, risco_sobrecusto,
+        probabilidade_atraso, classe_alerta, metodo_score,
+        calculado_em
     ) VALUES (
         :id_obra,
         :valor_total, :valor_pago,
         :pct_desembolso, :pct_fisico,
         :data_inicio, :data_fim_prevista, :data_fim_real,
-        :dias_atraso, :flag_atraso, NOW()
+        :dias_atraso, :flag_atraso,
+        :divergencia, :risco_sobrecusto,
+        :prob_atraso, :classe_alerta, :metodo_score,
+        NOW()
     )
     ON CONFLICT (id_obra_geoobras) DO UPDATE SET
-        valor_total_contratado  = EXCLUDED.valor_total_contratado,
-        valor_pago_acumulado    = EXCLUDED.valor_pago_acumulado,
-        percentual_desembolso   = EXCLUDED.percentual_desembolso,
-        percentual_fisico       = EXCLUDED.percentual_fisico,
-        dias_atraso             = EXCLUDED.dias_atraso,
-        flag_possivel_atraso    = EXCLUDED.flag_possivel_atraso,
-        calculado_em            = NOW()
+        valor_total_contratado         = EXCLUDED.valor_total_contratado,
+        valor_pago_acumulado           = EXCLUDED.valor_pago_acumulado,
+        percentual_desembolso          = EXCLUDED.percentual_desembolso,
+        percentual_fisico              = EXCLUDED.percentual_fisico,
+        dias_atraso                    = EXCLUDED.dias_atraso,
+        flag_possivel_atraso           = EXCLUDED.flag_possivel_atraso,
+        divergencia_fisico_financeira  = EXCLUDED.divergencia_fisico_financeira,
+        risco_sobrecusto               = EXCLUDED.risco_sobrecusto,
+        probabilidade_atraso           = EXCLUDED.probabilidade_atraso,
+        classe_alerta                  = EXCLUDED.classe_alerta,
+        metodo_score                   = EXCLUDED.metodo_score,
+        calculado_em                   = NOW()
 """)
 
 
@@ -80,6 +91,11 @@ def upsert_metrica(session: Session, m: dict[str, Any]) -> None:
             "data_fim_real": m.get("data_fim_real"),
             "dias_atraso": m.get("dias_atraso"),
             "flag_atraso": m.get("flag_possivel_atraso", False),
+            "divergencia": m.get("divergencia_fisico_financeira"),
+            "risco_sobrecusto": m.get("risco_sobrecusto"),
+            "prob_atraso": m.get("probabilidade_atraso"),
+            "classe_alerta": m.get("classe_alerta"),
+            "metodo_score": m.get("metodo_score"),
         },
     )
 
