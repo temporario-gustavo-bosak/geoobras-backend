@@ -6,7 +6,13 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from src.services.insights_service import _build_fallback, _build_user_message, get_obra_insight
+from src.services.insights_service import (
+    _SYSTEM_PROMPT,
+    _SYSTEM_PROMPT_CIDADAO,
+    _build_fallback,
+    _build_user_message,
+    get_obra_insight,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -247,3 +253,65 @@ def test_divergencia_recomputed_with_correct_sign_when_column_null() -> None:
     result = _build_fallback(obra)
     assert "+50" in result["resumo"]
     assert "-50" not in result["resumo"]
+
+
+# ---------------------------------------------------------------------------
+# D-02: persona-driven prompt and fallback tests
+# ---------------------------------------------------------------------------
+
+
+def test_cidadao_persona_sends_citizen_system_prompt_to_llm() -> None:
+    """Happy: persona='cidadao' must forward _SYSTEM_PROMPT_CIDADAO in the LLM payload."""
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"content": [{"text": "ok"}]}
+    mock_resp.raise_for_status.return_value = None
+
+    with (
+        patch("src.services.insights_service._fetch_obra_data", return_value=_mock_obra()),
+        patch("src.services.insights_service.get_settings", return_value=_mock_settings()),
+        patch("src.services.insights_service.httpx.post", return_value=mock_resp) as mock_post,
+    ):
+        result = get_obra_insight("aaaaaaaa-0000-0000-0000-000000000001", persona="cidadao")
+
+    assert result["fonte"] == "llm"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["system"] == _SYSTEM_PROMPT_CIDADAO
+    assert payload["system"] != _SYSTEM_PROMPT
+
+
+def test_auditor_persona_sends_technical_system_prompt_to_llm() -> None:
+    """Happy: persona='auditor' (default) must forward the technical _SYSTEM_PROMPT."""
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"content": [{"text": "ok"}]}
+    mock_resp.raise_for_status.return_value = None
+
+    with (
+        patch("src.services.insights_service._fetch_obra_data", return_value=_mock_obra()),
+        patch("src.services.insights_service.get_settings", return_value=_mock_settings()),
+        patch("src.services.insights_service.httpx.post", return_value=mock_resp) as mock_post,
+    ):
+        result = get_obra_insight("aaaaaaaa-0000-0000-0000-000000000001", persona="auditor")
+
+    assert result["fonte"] == "llm"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["system"] == _SYSTEM_PROMPT
+    assert payload["system"] != _SYSTEM_PROMPT_CIDADAO
+
+
+def test_llm_down_cidadao_returns_citizen_fallback_without_raising() -> None:
+    """Edge: LLM failure + persona='cidadao' → citizen fallback text, fonte='fallback', no exception."""
+    with (
+        patch("src.services.insights_service._fetch_obra_data", return_value=_mock_obra()),
+        patch("src.services.insights_service.get_settings", return_value=_mock_settings()),
+        patch(
+            "src.services.insights_service.httpx.post",
+            side_effect=httpx.TimeoutException("timed out"),
+        ),
+    ):
+        result = get_obra_insight("aaaaaaaa-0000-0000-0000-000000000001", persona="cidadao")
+
+    assert result["fonte"] == "fallback"
+    assert isinstance(result["resumo"], str) and result["resumo"]
+    # citizen fallback must not contain audit-specific jargon
+    assert "Classe de alerta:" not in result["resumo"]
+    assert "Divergência físico-financeira:" not in result["resumo"]

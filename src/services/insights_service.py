@@ -35,6 +35,20 @@ _SYSTEM_PROMPT = (
     "6. Limite a resposta a 3–4 parágrafos concisos."
 )
 
+_SYSTEM_PROMPT_CIDADAO = (
+    "Você explica obras públicas para cidadãos comuns, sem usar termos técnicos ou jurídicos. "
+    "Analise os dados fornecidos e produza um resumo simples e acessível.\n\n"
+    "Regras obrigatórias:\n"
+    "1. Use SOMENTE os dados fornecidos. Nunca invente ou suponha informações ausentes.\n"
+    "2. Explique o que os números significam na prática — por exemplo, o que significa "
+    "40% de execução física para quem mora no bairro.\n"
+    "3. Se a obra estiver atrasada, explique o impacto para os moradores e a comunidade, "
+    "mencionando o número de dias de atraso.\n"
+    "4. Use linguagem simples, direta e acessível ao público geral. Evite jargão técnico e termos de auditoria.\n"
+    "5. Não faça julgamentos jurídicos nem acusações sem base direta nos dados.\n"
+    "6. Limite a resposta a 3–4 parágrafos curtos."
+)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -123,11 +137,48 @@ def _build_fallback(obra: dict) -> dict:
     }
 
 
-def _call_llm(obra: dict, settings: Any) -> str:
+def _build_fallback_cidadao(obra: dict) -> dict:
+    nome = obra.get("nome") or "Obra sem nome"
+    partes: list[str] = [f"Informações sobre a obra: {nome}."]
+
+    pct_fisico: float | None = obra.get("percentual_fisico")
+    divergencia = _resolve_divergencia(obra)
+
+    if pct_fisico is not None:
+        partes.append(f"Até o momento, {pct_fisico:.0f}% da obra foi concluído fisicamente.")
+
+    if divergencia is not None:
+        if divergencia > 0:
+            partes.append(
+                f"O município já pagou mais do que o progresso físico da obra justifica "
+                f"({divergencia:+.1f} pontos percentuais a mais no pagamento do que na execução)."
+            )
+        elif divergencia < 0:
+            partes.append(
+                f"A obra avançou mais fisicamente do que o valor pago até agora "
+                f"({abs(divergencia):.1f} pontos percentuais à frente no físico)."
+            )
+
+    dias: int | None = obra.get("dias_atraso")
+    if dias and dias > 0:
+        partes.append(
+            f"A obra está {dias} dias atrasada em relação ao prazo original, "
+            f"o que pode adiar os benefícios esperados pela comunidade."
+        )
+
+    return {
+        "resumo": " ".join(partes),
+        "fonte": "fallback",
+        "id_obra_geoobras": str(obra.get("id_obra_geoobras", "")),
+    }
+
+
+def _call_llm(obra: dict, settings: Any, persona: str = "auditor") -> str:
+    system_prompt = _SYSTEM_PROMPT_CIDADAO if persona == "cidadao" else _SYSTEM_PROMPT
     payload: dict[str, Any] = {
         "model": settings.LLM_MODEL,
         "max_tokens": settings.LLM_MAX_TOKENS,
-        "system": _SYSTEM_PROMPT,
+        "system": system_prompt,
         "messages": [{"role": "user", "content": _build_user_message(obra)}],
     }
     resp = httpx.post(
@@ -171,11 +222,11 @@ def get_obra_insight(id_obra: str, obra: dict | None = None, persona: str = "aud
     settings = get_settings()
     if not settings.LLM_API_KEY:
         logger.info("LLM_API_KEY ausente — fallback para obra %s", id_obra)
-        return _build_fallback(obra)
+        return _build_fallback_cidadao(obra) if persona == "cidadao" else _build_fallback(obra)
 
     try:
-        resumo = _call_llm(obra, settings)
+        resumo = _call_llm(obra, settings, persona=persona)
         return {"resumo": resumo, "fonte": "llm", "id_obra_geoobras": id_obra}
     except Exception as exc:
         logger.warning("Falha na chamada LLM (obra %s): %s — usando fallback", id_obra, exc)
-        return _build_fallback(obra)
+        return _build_fallback_cidadao(obra) if persona == "cidadao" else _build_fallback(obra)
