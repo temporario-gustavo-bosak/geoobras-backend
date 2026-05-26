@@ -371,6 +371,9 @@ def _build_obra_from_tcerj_paralisada(row: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 SIMILARITY_THRESHOLD = 0.35
+# Fuzzy matches require at least this token-Jaccard on the name alone,
+# preventing date/value "missing=0.5" inflation from pushing a weak name past threshold.
+MIN_NAME_JACCARD = 0.50
 
 
 def _build_contract_index(obras_gov: list[dict]) -> dict[str, dict]:
@@ -393,24 +396,36 @@ def _match_obrasgov_com_tcerj(
     obras_tce: list[dict],
 ) -> list[dict]:
     """
-    Para cada obra TCE, tenta encontrar correspondente ObrasGov em duas etapas:
-    1. Determinístico: número de contrato em comum → score 1.0, fuzzy ignorado.
-    2. Fuzzy (fallback): score ponderado nome/data/valor quando não há chave determinística.
-    Obras TCE sem match são incluídas como novas entradas.
+    Combina obras TCE com ObrasGov em três passos:
 
-    IMPORTANTE: compara TCE apenas contra ObrasGov (não contra outras TCE).
+    Passo 1 – coleta candidatos (sem mutar):
+      a) Determinístico: número de contrato em comum → score 1.0.
+      b) Fuzzy (fallback): score ponderado nome/data/valor, com guarda
+         MIN_NAME_JACCARD sobre o nome para evitar falsos positivos por
+         inflação das dimensões ausentes (missing=0.5).
+
+    Passo 2 – resolve conflitos 1:1:
+      Um ObrasGov só pode ser vinculado a um único TCE. Se dois TCE competem
+      pelo mesmo gov, o de maior score vence; o perdedor é adicionado como
+      nova obra independente.
+
+    Passo 3 – aplica mutações:
+      Enriquecimento não-destrutivo: herda percentual_fisico,
+      valor_total_contratado e valor_pago_acumulado do TCE apenas quando o
+      campo correspondente no gov for nulo.
     """
     matched_tce_ids: set[int] = set()
-    result = list(obras_gov)  # começa com todas as obras ObrasGov
+    result = list(obras_gov)
 
-    # Índice de contratos ObrasGov construído uma única vez
     contract_index = _build_contract_index(obras_gov)
+
+    # --- Passo 1: coletar melhor candidato gov para cada TCE (sem mutar ainda) ---
+    candidates: list[tuple[dict, dict | None, float]] = []
 
     for tce in obras_tce:
         melhor_score = 0.0
-        melhor_gov = None
+        melhor_gov: dict | None = None
 
-        # --- Etapa 1: matching determinístico por número de contrato ---
         tce_num = _normalize_contract_num(tce.get("_numero_contrato"))
         if tce_num and tce_num in contract_index:
             melhor_gov = contract_index[tce_num]
@@ -422,35 +437,74 @@ def _match_obrasgov_com_tcerj(
                 (melhor_gov.get("nome") or "")[:60],
             )
         else:
-            # --- Etapa 2: fallback fuzzy ---
-            # Compara apenas contra obras ObrasGov, não contra o result inteiro
             for gov in obras_gov:
+                if _token_jaccard(gov.get("nome") or "", tce.get("nome") or "") < MIN_NAME_JACCARD:
+                    continue
                 score = _match_score(gov, tce)
                 if score > melhor_score:
                     melhor_score = score
                     melhor_gov = gov
 
-        if melhor_gov and melhor_score >= SIMILARITY_THRESHOLD:
-            melhor_gov["id_obras_tce"] = tce.get("id_obras_tce")
-            melhor_gov["fonte_principal"] = FontePrincipal.MISTA.value
-            # prefere % físico TCE se ObrasGov não tiver
-            if melhor_gov.get("percentual_fisico") is None:
-                melhor_gov["percentual_fisico"] = tce.get("percentual_fisico")
-            matched_tce_ids.add(tce.get("id_obras_tce"))  # type: ignore[arg-type]
-            logger.info(
-                "Match TCE→GOV: score=%.2f '%s' ↔ '%s'",
-                melhor_score,
-                (tce.get("nome") or "")[:60],
-                (melhor_gov.get("nome") or "")[:60],
-            )
-        else:
-            # TCE sem match → nova obra
+        candidates.append((tce, melhor_gov, melhor_score))
+
+    # --- Passo 2: resolver conflitos 1:1 ---
+    gov_winner: dict[int, tuple[dict, dict, float]] = {}  # id(gov) → (tce, gov, score)
+
+    for tce, gov, score in candidates:  # type: ignore[assignment]
+        if gov is None or score < SIMILARITY_THRESHOLD:
             result.append(tce)
             logger.debug(
                 "TCE sem match (melhor=%.2f): '%s'",
-                melhor_score,
+                score,
                 (tce.get("nome") or "")[:60],
             )
+            continue
+
+        gov_id = id(gov)
+        if gov_id not in gov_winner:
+            gov_winner[gov_id] = (tce, gov, score)
+        elif score > gov_winner[gov_id][2]:
+            old_tce, _, old_score = gov_winner[gov_id]
+            logger.warning(
+                "Conflito 1:1: GOV '%s' — mantendo TCE '%s' (%.2f), descartando TCE '%s' (%.2f)",
+                (gov.get("nome") or "")[:60],
+                (tce.get("nome") or "")[:60],
+                score,
+                (old_tce.get("nome") or "")[:60],
+                old_score,
+            )
+            result.append(old_tce)
+            gov_winner[gov_id] = (tce, gov, score)
+        else:
+            existing_tce, _, existing_score = gov_winner[gov_id]
+            logger.warning(
+                "Conflito 1:1: GOV '%s' já reivindicado por TCE '%s' (%.2f) — descartando TCE '%s' (%.2f)",
+                (gov.get("nome") or "")[:60],
+                (existing_tce.get("nome") or "")[:60],
+                existing_score,
+                (tce.get("nome") or "")[:60],
+                score,
+            )
+            result.append(tce)
+
+    # --- Passo 3: aplicar mutações apenas para os vencedores ---
+    for tce, gov, score in gov_winner.values():
+        gov["id_obras_tce"] = tce.get("id_obras_tce")
+        gov["fonte_principal"] = FontePrincipal.MISTA.value
+        # Enriquecimento não-destrutivo: herda do TCE apenas quando o campo gov for nulo
+        if gov.get("percentual_fisico") is None:
+            gov["percentual_fisico"] = tce.get("percentual_fisico")
+        if gov.get("valor_total_contratado") is None:
+            gov["valor_total_contratado"] = tce.get("valor_total_contratado")
+        if gov.get("valor_pago_acumulado") is None:
+            gov["valor_pago_acumulado"] = tce.get("valor_pago_acumulado")
+        matched_tce_ids.add(tce.get("id_obras_tce"))  # type: ignore[arg-type]
+        logger.info(
+            "Match TCE→GOV: score=%.2f '%s' ↔ '%s'",
+            score,
+            (tce.get("nome") or "")[:60],
+            (gov.get("nome") or "")[:60],
+        )
 
     logger.info(
         "Matching: %d ObrasGov + %d TCE sem match = %d total (%d matched)",
