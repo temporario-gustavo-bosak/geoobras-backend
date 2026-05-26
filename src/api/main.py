@@ -113,6 +113,11 @@ app = FastAPI(
         "url": "https://creativecommons.org/licenses/by/4.0/",
     },
     openapi_tags=_OPENAPI_TAGS,
+    swagger_ui_parameters={
+        "docExpansion": "list",
+        "defaultModelsExpandDepth": 1,
+        "tryItOutEnabled": False,
+    },
     lifespan=lifespan,
 )
 
@@ -142,7 +147,12 @@ def get_db():
 # ---------------------------------------------------------------------------
 
 
-@app.get("/health", tags=["Operação"])
+@app.get(
+    "/health",
+    tags=["Operação"],
+    response_description="Status da API e conectividade com o banco de dados",
+    responses={200: {"content": {"application/json": {"example": {"status": "ok", "banco": True}}}}},
+)
 def health_check():
     return {"status": "ok", "banco": test_connection()}
 
@@ -151,7 +161,42 @@ def health_check():
     "/api/v1/obras",
     response_model=ObrasListResponse,
     summary="Lista obras públicas (com filtros opcionais)",
+    response_description="Lista paginada de obras com indicadores financeiros e físicos",
     tags=["Obras"],
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "total": 127,
+                        "page": 1,
+                        "page_size": 50,
+                        "items": [
+                            {
+                                "id": "550e8400-e29b-41d4-a716-446655440000",
+                                "nome": "Pavimentação Av. Beira-Mar",
+                                "status": "em_execucao",
+                                "data_inicio": "2022-03-01",
+                                "data_fim_prevista": "2023-03-01",
+                                "data_fim_real": None,
+                                "valor_total_contratado": 1500000.0,
+                                "valor_pago_acumulado": 900000.0,
+                                "percentual_fisico": 42.5,
+                                "percentual_desembolso": 60.0,
+                                "latitude": -22.3765,
+                                "longitude": -41.7869,
+                                "flag_data_fim_pendente": False,
+                                "flag_populacao_suspeita": False,
+                                "flag_empregos_suspeitos": False,
+                                "flag_possivel_atraso": True,
+                                "fonte_principal": "obrasgov",
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+    },
 )
 def list_obras(
     situacao: Optional[str] = Query(None, description="Filtra por status_obra"),
@@ -190,7 +235,31 @@ def list_obras(
     "/api/v1/obras/{id}",
     response_model=ObraDetalhe,
     summary="Detalhe completo de uma obra",
+    response_description="Todos os campos da obra, incluindo contratos vinculados e métricas analytics",
     tags=["Obras"],
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id_obra_geoobras": "550e8400-e29b-41d4-a716-446655440000",
+                        "nome": "Pavimentação Av. Beira-Mar",
+                        "municipio": "Macaé",
+                        "uf": "RJ",
+                        "status_obra": "em_execucao",
+                        "valor_total_contratado": 1500000.0,
+                        "percentual_fisico": 42.5,
+                        "percentual_desembolso": 60.0,
+                        "dias_atraso": 45,
+                        "flag_possivel_atraso": True,
+                        "contratos": [],
+                        "convenios": [],
+                    }
+                }
+            }
+        },
+        404: {"description": "Obra não encontrada"},
+    },
 )
 def get_obra(id: UUID, db: Session = Depends(get_db)):
     obra = query_obra_detalhe(db, str(id))
@@ -208,7 +277,33 @@ def get_obra(id: UUID, db: Session = Depends(get_db)):
     "/api/v1/obras/{id}/insights",
     response_model=InsightResponse,
     summary="Resumo analítico de uma obra gerado por LLM (com fallback determinístico)",
+    response_description="Resumo em texto, sinalizadores de alerta e fonte de geração",
     tags=["Insights"],
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "resumo": (
+                            "A obra apresenta divergência físico-financeira de +17,5 p.p.: "
+                            "o desembolso (60%) está à frente da execução física (42,5%). "
+                            "Há atraso de 45 dias em relação ao prazo contratual."
+                        ),
+                        "flags": {
+                            "possivel_atraso": True,
+                            "data_fim_pendente": False,
+                            "populacao_suspeita": False,
+                            "empregos_suspeitos": False,
+                            "dias_atraso": 45,
+                        },
+                        "fonte": "llm",
+                        "gerado_em": "2025-05-26T10:00:00",
+                    }
+                }
+            }
+        },
+        404: {"description": "Obra não encontrada"},
+    },
 )
 def get_obra_insights(
     id: UUID,
@@ -241,7 +336,28 @@ def get_obra_insights(
     "/api/v1/estatisticas",
     response_model=EstatisticasResponse,
     summary="Estatísticas agregadas das obras de Macaé",
+    response_description="Distribuição por status, média de execução física e distribuição de atrasos",
     tags=["Estatísticas"],
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "obras_por_status": [
+                            {"status_obra": "em_execucao", "qtd": 58},
+                            {"status_obra": "concluida", "qtd": 41},
+                            {"status_obra": "paralisada", "qtd": 12},
+                        ],
+                        "media_percentual_fisico": 47.3,
+                        "distribuicao_atraso": [
+                            {"flag_possivel_atraso": True, "qtd": 34},
+                            {"flag_possivel_atraso": False, "qtd": 77},
+                        ],
+                    }
+                }
+            }
+        }
+    },
 )
 def get_estatisticas(db: Session = Depends(get_db)):
     stats = query_estatisticas(db)

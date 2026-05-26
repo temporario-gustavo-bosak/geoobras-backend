@@ -60,3 +60,46 @@ def test_health_still_returns_200() -> None:
         response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# E-02: response examples and schema docs smoke tests
+# ---------------------------------------------------------------------------
+
+
+def test_obras_list_endpoint_has_response_example() -> None:
+    """
+    Smoke test: GET /api/v1/obras must expose an inline example in the OpenAPI spec
+    so Swagger UI renders it without a live DB connection.
+    """
+    schema = _schema()
+    example = (
+        schema.get("paths", {})
+        .get("/api/v1/obras", {})
+        .get("get", {})
+        .get("responses", {})
+        .get("200", {})
+        .get("content", {})
+        .get("application/json", {})
+        .get("example")
+    )
+    assert example is not None, "No response example found for GET /api/v1/obras"
+    assert "items" in example, "Example must contain an 'items' list"
+    assert "total" in example, "Example must contain a 'total' count"
+
+
+def test_swagger_ui_parameters_present() -> None:
+    """FastAPI constructor must declare swagger_ui_parameters for /docs customisation."""
+    assert app.swagger_ui_parameters, "swagger_ui_parameters not set on the FastAPI app"
+    assert "docExpansion" in app.swagger_ui_parameters
+
+
+def test_insight_response_fields_have_descriptions() -> None:
+    """Key fields on InsightResponse must carry a description in the schema."""
+    schema = _schema()
+    insight_schema = schema.get("components", {}).get("schemas", {}).get("InsightResponse", {})
+    props = insight_schema.get("properties", {})
+    for field in ("resumo", "fonte", "flags", "gerado_em"):
+        assert props.get(field, {}).get("description"), (
+            f"InsightResponse.{field} is missing a description in the OpenAPI schema"
+        )
