@@ -45,22 +45,41 @@ def _fmt_pct(value: float | None, label: str) -> str:
     return f"{label}: {value:.1f}%" if value is not None else f"{label}: N/D"
 
 
+def _resolve_divergencia(obra: dict) -> float | None:
+    """
+    Returns divergencia_fisico_financeira using the analytics convention:
+    desembolso - fisico (positive = payment ahead of physical progress).
+    Reads the persisted column first; recomputes only when the column is absent.
+    """
+    div = obra.get("divergencia_fisico_financeira")
+    if div is not None:
+        return div
+    pct_d = obra.get("percentual_desembolso")
+    pct_f = obra.get("percentual_fisico")
+    if pct_d is not None and pct_f is not None:
+        return round(pct_d - pct_f, 2)
+    return None
+
+
 def _build_user_message(obra: dict) -> str:
     pct_fisico: float | None = obra.get("percentual_fisico")
     pct_desembolso: float | None = obra.get("percentual_desembolso")
-    divergencia: float | None = (
-        pct_fisico - pct_desembolso if pct_fisico is not None and pct_desembolso is not None else None
-    )
+    divergencia = _resolve_divergencia(obra)
     risco: float | None = obra.get("risco_sobrecusto")
     valor_contratado: float | None = obra.get("valor_total_contratado")
     valor_pago: float | None = obra.get("valor_pago_acumulado")
 
+    div_str = (
+        f"Divergência físico-financeira: {divergencia:+.1f} p.p. (positivo = desembolso à frente da execução física)"
+        if divergencia is not None
+        else "Divergência: N/D"
+    )
     linhas = [
         f"Obra: {obra.get('nome') or 'sem nome'}",
         f"Status: {obra.get('status_obra') or 'desconhecido'}",
         _fmt_pct(pct_fisico, "Execução física"),
         _fmt_pct(pct_desembolso, "Desembolso financeiro"),
-        f"Divergência físico-financeira: {divergencia:+.1f} p.p." if divergencia is not None else "Divergência: N/D",
+        div_str,
         f"Dias de atraso: {obra.get('dias_atraso') or 0}",
         f"Risco de sobrecusto: {risco * 100:.1f}%" if risco is not None else "Risco de sobrecusto: N/D",
         f"Classe de alerta: {obra.get('classe_alerta') or 'N/D'}",
@@ -76,11 +95,13 @@ def _build_fallback(obra: dict) -> dict:
 
     pct_fisico: float | None = obra.get("percentual_fisico")
     pct_desembolso: float | None = obra.get("percentual_desembolso")
-    if pct_fisico is not None and pct_desembolso is not None:
-        div = pct_fisico - pct_desembolso
+    divergencia = _resolve_divergencia(obra)
+    if divergencia is not None:
+        fisico_str = f"{pct_fisico:.1f}%" if pct_fisico is not None else "N/D"
+        desemb_str = f"{pct_desembolso:.1f}%" if pct_desembolso is not None else "N/D"
         partes.append(
-            f"Execução física: {pct_fisico:.1f}% | Desembolso: {pct_desembolso:.1f}%"
-            f" | Divergência físico-financeira: {div:+.1f} p.p."
+            f"Execução física: {fisico_str} | Desembolso: {desemb_str}"
+            f" | Divergência físico-financeira: {divergencia:+.1f} p.p. (desembolso à frente)"
         )
 
     dias: int | None = obra.get("dias_atraso")

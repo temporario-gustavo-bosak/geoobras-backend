@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from src.services.insights_service import _build_fallback, get_obra_insight
+from src.services.insights_service import _build_fallback, _build_user_message, get_obra_insight
 
 
 # ---------------------------------------------------------------------------
@@ -26,6 +26,8 @@ def _mock_obra() -> dict:
         "valor_pago_acumulado": 800_000.0,
         "percentual_fisico": 40.0,
         "percentual_desembolso": 80.0,
+        # analytics convention: desembolso - fisico (positive = payment ahead of physical)
+        "divergencia_fisico_financeira": 40.0,
         "dias_atraso": 120,
         "flag_possivel_atraso": True,
         "risco_sobrecusto": 0.75,
@@ -161,13 +163,14 @@ def test_obra_not_found_returns_fallback_dict() -> None:
 
 
 def test_fallback_includes_divergencia_text() -> None:
-    """_build_fallback must mention the physical-financial divergence in its summary."""
-    obra = _mock_obra()  # pct_fisico=40, pct_desembolso=80  →  div=-40 p.p.
+    """_build_fallback must mention the divergence using the analytics sign convention."""
+    # divergencia_fisico_financeira=+40 (desembolso 80 - fisico 40, positive = overpayment risk)
+    obra = _mock_obra()
     result = _build_fallback(obra)
 
     assert result["fonte"] == "fallback"
     assert "divergência" in result["resumo"].lower()
-    assert "-40" in result["resumo"]
+    assert "+40" in result["resumo"]
 
 
 def test_fallback_includes_alert_class() -> None:
@@ -183,3 +186,64 @@ def test_fallback_handles_missing_metrics_gracefully(missing_field: str) -> None
     result = _build_fallback(obra)
     assert result["fonte"] == "fallback"
     assert isinstance(result["resumo"], str)
+
+
+# ---------------------------------------------------------------------------
+# HF-01: divergence sign and column-priority tests
+# ---------------------------------------------------------------------------
+
+
+def test_divergencia_persisted_column_takes_priority() -> None:
+    """
+    Happy path: obra 80 % paid / 30 % physical, persisted column = +50.0.
+    Both _build_user_message and _build_fallback must emit +50.0 p.p.
+    """
+    obra = {
+        "id_obra_geoobras": "bbbbbbbb-0000-0000-0000-000000000002",
+        "nome": "Ponte Nova",
+        "status_obra": "em_execucao",
+        "percentual_fisico": 30.0,
+        "percentual_desembolso": 80.0,
+        "divergencia_fisico_financeira": 50.0,  # persisted by analytics
+        "dias_atraso": None,
+        "risco_sobrecusto": None,
+        "classe_alerta": None,
+        "valor_total_contratado": None,
+        "valor_pago_acumulado": None,
+    }
+
+    msg = _build_user_message(obra)
+    assert "+50.0 p.p." in msg
+
+    result = _build_fallback(obra)
+    assert "+50" in result["resumo"]
+    assert "divergência" in result["resumo"].lower()
+
+
+def test_divergencia_recomputed_with_correct_sign_when_column_null() -> None:
+    """
+    Edge: divergencia_fisico_financeira is None (analytics not yet run).
+    Both helpers must recompute as desembolso - fisico (positive when desembolso > fisico),
+    NOT as fisico - desembolso.
+    """
+    obra = {
+        "id_obra_geoobras": "cccccccc-0000-0000-0000-000000000003",
+        "nome": "Escola Sul",
+        "status_obra": "em_execucao",
+        "percentual_fisico": 30.0,
+        "percentual_desembolso": 80.0,
+        "divergencia_fisico_financeira": None,  # column absent
+        "dias_atraso": None,
+        "risco_sobrecusto": None,
+        "classe_alerta": None,
+        "valor_total_contratado": None,
+        "valor_pago_acumulado": None,
+    }
+
+    msg = _build_user_message(obra)
+    assert "+50.0 p.p." in msg
+    assert "-50" not in msg
+
+    result = _build_fallback(obra)
+    assert "+50" in result["resumo"]
+    assert "-50" not in result["resumo"]
