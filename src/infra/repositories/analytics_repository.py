@@ -201,6 +201,33 @@ def query_obras_list(
     return [dict(r) for r in rows], total
 
 
+def fetch_obra_insights(session: Session, id_obra: str) -> dict | None:
+    """Consolidated data for the insights endpoint: obra + full analytics (including risk columns)."""
+    sql = text("""
+        SELECT
+            o.id_obra_geoobras,
+            o.nome,
+            o.status_obra,
+            o.data_inicio,
+            o.data_fim_prevista,
+            o.data_fim_real,
+            o.valor_total_contratado,
+            o.valor_pago_acumulado,
+            o.percentual_fisico,
+            m.percentual_desembolso,
+            m.dias_atraso,
+            m.flag_possivel_atraso,
+            m.risco_sobrecusto,
+            m.classe_alerta,
+            m.metodo_score
+        FROM clean.obras o
+        LEFT JOIN analytics.metricas_obra m ON m.id_obra_geoobras = o.id_obra_geoobras
+        WHERE o.id_obra_geoobras = :id
+    """)
+    row = session.execute(sql, {"id": id_obra}).mappings().first()
+    return dict(row) if row else None
+
+
 def query_obra_detalhe(session: Session, id_obra: str) -> dict | None:
     sql = text("""
         SELECT o.*,
