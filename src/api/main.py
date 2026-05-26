@@ -7,6 +7,7 @@ Expõe os endpoints REST /api/v1/*.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -38,6 +39,21 @@ from src.infra.repositories.analytics_repository import (
 
 logger = logging.getLogger("api.main")
 
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if test_connection():
+        logger.info("GeoObras API iniciada – conexão com banco OK")
+    else:
+        logger.error("GeoObras API: FALHA ao conectar ao banco de dados!")
+    yield
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -46,6 +62,7 @@ app = FastAPI(
     title="GeoObras API",
     description="API REST para monitoramento de obras públicas – Macaé/RJ",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -67,19 +84,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
-
-
-@app.on_event("startup")
-def startup_event():
-    if test_connection():
-        logger.info("GeoObras API iniciada – conexão com banco OK")
-    else:
-        logger.error("GeoObras API: FALHA ao conectar ao banco de dados!")
 
 
 # ---------------------------------------------------------------------------
