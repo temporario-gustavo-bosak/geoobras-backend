@@ -85,9 +85,7 @@ class ObraDetalhe(BaseModel):
     uf: Optional[str] = Field(None, description="Unidade Federativa", examples=["RJ"])
     bairro: Optional[str] = None
     logradouro: Optional[str] = None
-    status_obra: Optional[str] = Field(
-        None, description="Situação atual da obra", examples=["em_execucao"]
-    )
+    status_obra: Optional[str] = Field(None, description="Situação atual da obra", examples=["em_execucao"])
     data_inicio: Optional[date] = None
     data_fim_prevista: Optional[date] = None
     data_fim_real: Optional[date] = None

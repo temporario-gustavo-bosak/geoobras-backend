@@ -69,7 +69,7 @@ def test_llm_success_returns_fonte_llm_and_references_divergencia() -> None:
         "O atraso de 120 dias sinaliza risco elevado."
     )
     mock_resp = MagicMock()
-    mock_resp.json.return_value = {"content": [{"text": llm_text}]}
+    mock_resp.json.return_value = {"choices": [{"message": {"content": llm_text}}]}
     mock_resp.raise_for_status.return_value = None
 
     with (
@@ -86,7 +86,7 @@ def test_llm_success_returns_fonte_llm_and_references_divergencia() -> None:
 def test_llm_called_with_obra_metrics_in_payload() -> None:
     """LLM request payload must include the user message built from obra metrics."""
     mock_resp = MagicMock()
-    mock_resp.json.return_value = {"content": [{"text": "ok"}]}
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
     mock_resp.raise_for_status.return_value = None
 
     with (
@@ -97,7 +97,7 @@ def test_llm_called_with_obra_metrics_in_payload() -> None:
         get_obra_insight("aaaaaaaa-0000-0000-0000-000000000001")
 
     payload = mock_post.call_args.kwargs["json"]
-    user_content = payload["messages"][0]["content"]
+    user_content = payload["messages"][1]["content"]
     assert "Escola Municipal Centro" in user_content
     assert "Divergência" in user_content
 
@@ -263,7 +263,7 @@ def test_divergencia_recomputed_with_correct_sign_when_column_null() -> None:
 def test_cidadao_persona_sends_citizen_system_prompt_to_llm() -> None:
     """Happy: persona='cidadao' must forward _SYSTEM_PROMPT_CIDADAO in the LLM payload."""
     mock_resp = MagicMock()
-    mock_resp.json.return_value = {"content": [{"text": "ok"}]}
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
     mock_resp.raise_for_status.return_value = None
 
     with (
@@ -275,14 +275,14 @@ def test_cidadao_persona_sends_citizen_system_prompt_to_llm() -> None:
 
     assert result["fonte"] == "llm"
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["system"] == _SYSTEM_PROMPT_CIDADAO
-    assert payload["system"] != _SYSTEM_PROMPT
+    assert payload["messages"][0]["content"] == _SYSTEM_PROMPT_CIDADAO
+    assert payload["messages"][0]["content"] != _SYSTEM_PROMPT
 
 
 def test_auditor_persona_sends_technical_system_prompt_to_llm() -> None:
     """Happy: persona='auditor' (default) must forward the technical _SYSTEM_PROMPT."""
     mock_resp = MagicMock()
-    mock_resp.json.return_value = {"content": [{"text": "ok"}]}
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
     mock_resp.raise_for_status.return_value = None
 
     with (
@@ -294,8 +294,8 @@ def test_auditor_persona_sends_technical_system_prompt_to_llm() -> None:
 
     assert result["fonte"] == "llm"
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["system"] == _SYSTEM_PROMPT
-    assert payload["system"] != _SYSTEM_PROMPT_CIDADAO
+    assert payload["messages"][0]["content"] == _SYSTEM_PROMPT
+    assert payload["messages"][0]["content"] != _SYSTEM_PROMPT_CIDADAO
 
 
 def test_llm_down_cidadao_returns_citizen_fallback_without_raising() -> None:

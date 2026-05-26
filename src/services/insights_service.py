@@ -177,22 +177,23 @@ def _call_llm(obra: dict, settings: Any, persona: str = "auditor") -> str:
     system_prompt = _SYSTEM_PROMPT_CIDADAO if persona == "cidadao" else _SYSTEM_PROMPT
     payload: dict[str, Any] = {
         "model": settings.LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": _build_user_message(obra)},
+        ],
         "max_tokens": settings.LLM_MAX_TOKENS,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": _build_user_message(obra)}],
     }
     resp = httpx.post(
         settings.LLM_BASE_URL,
         json=payload,
         headers={
-            "x-api-key": settings.LLM_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
+            "Authorization": f"Bearer {settings.LLM_API_KEY}",
+            "Content-Type": "application/json",
         },
         timeout=settings.LLM_TIMEOUT,
     )
     resp.raise_for_status()
-    return str(resp.json()["content"][0]["text"])
+    return str(resp.json()["choices"][0]["message"]["content"])
 
 
 def _fetch_obra_data(id_obra: str) -> dict | None:
