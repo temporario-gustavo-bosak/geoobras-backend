@@ -1,0 +1,553 @@
+"""
+services/clean_service.py
+Normaliza dados RAW → CLEAN.
+Filtra para Macaé, faz matching heurístico ObrasGov ↔ TCE-RJ,
+resolve datas pendentes, flags de qualidade e geometria.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import unicodedata
+import uuid
+from datetime import date, datetime
+from typing import Any, Optional
+
+from src.config.settings import get_settings
+from src.domain.enums import (
+    OBRASGOV_STATUS_MAP,
+    TCERJ_STATUS_MAP,
+    FontePrincipal,
+    StatusObra,
+)
+from src.infra.db import get_session
+from src.infra.repositories import clean_repository as clean_repo
+from src.services.geometry_service import extract_lat_lon, wkt_to_geom_text
+
+logger = logging.getLogger(__name__)
+_settings = get_settings()
+
+MUNICIPIO_ALVO = _settings.OBRASGOV_MUNICIPIO_ALVO.upper()
+# Versão sem acento para comparação com dados legados de governo (ex: "MACAE" em vez de "MACAÉ")
+_MUNICIPIO_ALVO_ASCII = unicodedata.normalize("NFD", MUNICIPIO_ALVO).encode("ascii", "ignore").decode()
+
+# Código IBGE de Macaé/RJ
+COD_MUNICIPIO_MACAE = 3302403
+
+# Marcadores textuais de "data pendente" no ObrasGov
+PENDENTE_MARKERS = {"informacao pendente", "informação pendente", "pendente", "a definir", ""}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_macae(text_fields: list[str | None]) -> bool:
+    """
+    Verifica se algum dos campos de texto contém referência a Macaé.
+    Normaliza acentos antes de comparar para tratar variações como
+    "MACAE" (sem cedilha) vs "MACAÉ" — comum em sistemas legados de governo.
+    """
+    for f in text_fields:
+        if not f:
+            continue
+        normalized = unicodedata.normalize("NFD", str(f).upper()).encode("ascii", "ignore").decode()
+        if _MUNICIPIO_ALVO_ASCII in normalized:
+            return True
+    return False
+
+
+def _municipios_tomadores(row: dict) -> list[str]:
+    """
+    Extrai nomes de município do JSONB de tomadores/executores.
+    A tabela raw.obrasgov_projetos não tem coluna 'municipio' direta;
+    o município fica aninhado dentro do array tomadores da API.
+    """
+    result: list[str] = []
+    for field in ("tomadores", "executores"):
+        items = row.get(field) or []
+        if isinstance(items, str):
+            try:
+                items = json.loads(items)
+            except Exception:
+                continue
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in ("municipio", "nomeMunicipio", "municipioNome"):
+                m = item.get(key)
+                if m:
+                    result.append(str(m))
+    return result
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    """Converte string de data (ISO ou BR) para date, retornando None se pendente."""
+    if not value:
+        return None
+    s = str(value).strip()
+    if s.lower() in PENDENTE_MARKERS:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(s[:10], fmt[:8]).date()
+        except ValueError:
+            continue
+    logger.debug("Não foi possível parsear data: %r", value)
+    return None
+
+
+def _is_date_pending(value: Any) -> bool:
+    """Retorna True se o valor representa informação pendente."""
+    if not value:
+        return True
+    return str(value).strip().lower() in PENDENTE_MARKERS
+
+
+def _map_status_obrasgov(situacao: Optional[str]) -> str:
+    if not situacao:
+        return StatusObra.DESCONHECIDA.value
+    key = situacao.strip().lower()
+    mapped = OBRASGOV_STATUS_MAP.get(key)
+    if mapped is None:
+        logger.warning("Status ObrasGov não mapeado: %r → desconhecida", situacao)
+    return (mapped or StatusObra.DESCONHECIDA).value
+
+
+def _map_status_tcerj(situacao: Optional[str], paralisada: bool = False) -> str:
+    if paralisada:
+        return StatusObra.PARALISADA.value
+    if not situacao:
+        return StatusObra.DESCONHECIDA.value
+    key = situacao.strip().lower()
+    mapped = TCERJ_STATUS_MAP.get(key)
+    if mapped is None:
+        logger.warning("Status TCE-RJ não mapeado: %r → desconhecida", situacao)
+    return (mapped or StatusObra.DESCONHECIDA).value
+
+
+_STOPWORDS = {
+    "a",
+    "ao",
+    "as",
+    "da",
+    "das",
+    "de",
+    "do",
+    "dos",
+    "e",
+    "em",
+    "na",
+    "nas",
+    "no",
+    "nos",
+    "o",
+    "os",
+    "para",
+    "por",
+    "se",
+    "com",
+    "um",
+    "uma",
+}
+
+
+def _normalize_tokens(s: str) -> set[str]:
+    """Remove acentos, tokeniza e exclui stopwords."""
+    ascii_s = unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
+    tokens = set(re.sub(r"[^a-z0-9\s]", " ", ascii_s).split()) - _STOPWORDS
+    return tokens
+
+
+def _token_jaccard(a: str, b: str) -> float:
+    """Similaridade Jaccard entre conjuntos de tokens (insensível a ordem e acento)."""
+    ta, tb = _normalize_tokens(a), _normalize_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _date_proximity(d1: Optional[date], d2: Optional[date], max_days: int = 180) -> float:
+    """Score 0-1 baseado na proximidade de datas. 0.5 quando alguma data é desconhecida."""
+    if d1 is None or d2 is None:
+        return 0.5
+    delta = abs((d1 - d2).days)
+    return max(0.0, 1.0 - delta / max_days)
+
+
+def _value_proximity(v1: Optional[float], v2: Optional[float]) -> float:
+    """Score 0-1 baseado na proximidade de valores. 0.5 quando algum é desconhecido."""
+    if v1 is None or v2 is None:
+        return 0.5
+    if max(v1, v2) == 0:
+        return 1.0
+    return min(v1, v2) / max(v1, v2)
+
+
+def _match_score(gov: dict, tce: dict) -> float:
+    """
+    Score ponderado multi-campo entre obra ObrasGov e TCE-RJ.
+    Pesos: nome 60%, data_inicio 20%, valor_contratado 20%.
+    """
+    nome = _token_jaccard(gov.get("nome") or "", tce.get("nome") or "")
+    data = _date_proximity(gov.get("data_inicio"), tce.get("data_inicio"))
+    valor = _value_proximity(gov.get("valor_total_contratado"), tce.get("valor_total_contratado"))
+    return 0.60 * nome + 0.20 * data + 0.20 * valor
+
+
+# ---------------------------------------------------------------------------
+# Normalização de obras ObrasGov
+# ---------------------------------------------------------------------------
+
+
+def _build_obra_from_obrasgov(
+    proj: dict,
+    ef_map: dict[str, dict],
+    soma_empenhos: dict[str, float],
+    contratos_map: dict[str, list[dict]],
+    geo_map: dict[str, dict],
+) -> dict:
+    id_unico = proj["id_unico"]
+
+    # Datas
+    data_inicio = _parse_date(proj.get("data_inicial_efetiva") or proj.get("data_inicial_prevista"))
+    data_fim_prevista = _parse_date(proj.get("data_final_prevista"))
+    data_fim_real = _parse_date(proj.get("data_final_efetiva"))
+    flag_data_fim = _is_date_pending(proj.get("data_final_efetiva")) and _is_date_pending(
+        proj.get("data_final_prevista")
+    )
+
+    # Valores
+    contratos = contratos_map.get(id_unico, [])
+    valor_global = max((c.get("valor_global") or 0 for c in contratos), default=None)
+    valor_acumulado = sum(c.get("valor_acumulado") or 0 for c in contratos) or None  # noqa: F841
+    valor_pago = soma_empenhos.get(id_unico)
+
+    # Execução física
+    ef = ef_map.get(id_unico, {})
+    pct_fisico = ef.get("percentual")
+
+    # Geometria
+    lat, lon, geom_wkt = None, None, None
+    geo = geo_map.get(id_unico)
+    if geo:
+        wkt = geo.get("geometria_wkt") or geo.get("geometria_raw")
+        lat, lon = extract_lat_lon(wkt)
+        geom_wkt = wkt_to_geom_text(wkt)
+
+    # Flags qualidade
+    pop = proj.get("populacao_beneficiada")
+    emp = proj.get("qtd_empregos_gerados")
+
+    return {
+        "id_obra_geoobras": str(uuid.uuid4()),
+        "id_unico_obrasgov": id_unico,
+        "id_obras_tce": None,
+        "nome": proj.get("nome") or "Sem nome",
+        "descricao": proj.get("descricao"),
+        "municipio": MUNICIPIO_ALVO.title(),
+        "uf": "RJ",
+        "codigo_municipio": COD_MUNICIPIO_MACAE,
+        "bairro": None,  # ObrasGov não tem campo de bairro direto
+        "logradouro": proj.get("endereco"),
+        "status_obra": _map_status_obrasgov(proj.get("situacao")),
+        "data_inicio": data_inicio,
+        "data_fim_prevista": data_fim_prevista,
+        "data_fim_real": data_fim_real,
+        "flag_data_fim_pendente": flag_data_fim,
+        "percentual_fisico": pct_fisico,
+        "populacao_beneficiada": pop,
+        "flag_populacao_suspeita": pop is not None and pop == 0,
+        "empregos_gerados": emp,
+        "flag_empregos_suspeitos": emp is not None and emp == 0,
+        "valor_total_contratado": valor_global,
+        "valor_pago_acumulado": valor_pago,
+        "valor_previsto_original": None,  # ObrasGov não tem campo direto
+        "latitude": lat,
+        "longitude": lon,
+        "geom": geom_wkt,
+        "fonte_principal": FontePrincipal.OBRASGOV.value,
+        # Manter contratos para posterior inserção em clean.contratos
+        "_contratos_raw": contratos,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Normalização de obras TCE-RJ
+# ---------------------------------------------------------------------------
+
+
+def _build_obra_from_tcerj(row: dict) -> dict:
+    data_inicio = _parse_date(row.get("data_inicio"))
+    data_fim_prevista = _parse_date(row.get("previsao_conclusao"))
+
+    return {
+        "id_obra_geoobras": str(uuid.uuid4()),
+        "id_unico_obrasgov": None,
+        "id_obras_tce": row.get("id"),
+        "nome": row.get("objeto") or "Sem nome (TCE)",
+        "descricao": None,
+        "municipio": MUNICIPIO_ALVO.title(),
+        "uf": "RJ",
+        "codigo_municipio": COD_MUNICIPIO_MACAE,
+        "bairro": None,
+        "logradouro": None,
+        "status_obra": _map_status_tcerj(row.get("situacao"), bool(row.get("obra_paralisada"))),
+        "data_inicio": data_inicio,
+        "data_fim_prevista": data_fim_prevista,
+        "data_fim_real": None,
+        "flag_data_fim_pendente": data_fim_prevista is None,
+        "percentual_fisico": row.get("percentual_concluido"),
+        "populacao_beneficiada": None,
+        "flag_populacao_suspeita": False,
+        "empregos_gerados": None,
+        "flag_empregos_suspeitos": False,
+        "valor_total_contratado": row.get("contratados"),
+        "valor_pago_acumulado": row.get("praticados"),
+        "valor_previsto_original": None,
+        "latitude": None,
+        "longitude": None,
+        "geom": None,
+        "fonte_principal": FontePrincipal.TCE.value,
+        "_contratos_raw": [],
+    }
+
+
+def _build_obra_from_tcerj_paralisada(row: dict) -> dict:
+    """Normaliza uma obra paralisada do TCE-RJ (raw.tcerj_obras_paralisadas)."""
+    data_inicio = _parse_date(row.get("data_inicio_obra"))
+
+    return {
+        "id_obra_geoobras": str(uuid.uuid4()),
+        "id_unico_obrasgov": None,
+        "id_obras_tce": row.get("id"),
+        "nome": row.get("nome") or "Sem nome (TCE paralisada)",
+        "descricao": row.get("funcao_governo"),
+        "municipio": (row.get("ente") or MUNICIPIO_ALVO).strip().title(),
+        "uf": "RJ",
+        "codigo_municipio": COD_MUNICIPIO_MACAE,
+        "bairro": None,
+        "logradouro": None,
+        "status_obra": StatusObra.PARALISADA.value,
+        "data_inicio": data_inicio,
+        "data_fim_prevista": None,
+        "data_fim_real": None,
+        "flag_data_fim_pendente": True,
+        "percentual_fisico": None,
+        "populacao_beneficiada": None,
+        "flag_populacao_suspeita": False,
+        "empregos_gerados": None,
+        "flag_empregos_suspeitos": False,
+        "valor_total_contratado": row.get("valor_total_contrato"),
+        "valor_pago_acumulado": row.get("valor_pago_obra"),
+        "valor_previsto_original": None,
+        "latitude": None,
+        "longitude": None,
+        "geom": None,
+        "fonte_principal": FontePrincipal.TCE.value,
+        "_contratos_raw": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Matching ObrasGov ↔ TCE-RJ
+# Score ponderado: Jaccard de tokens no nome (60%) + proximidade de data (20%)
+# + proximidade de valor contratado (20%). Threshold 0.35 calibrado para
+# Jaccard de tokens (valores menores que SequenceMatcher ratio pelo design).
+# ---------------------------------------------------------------------------
+
+SIMILARITY_THRESHOLD = 0.35
+
+
+def _match_obrasgov_com_tcerj(
+    obras_gov: list[dict],
+    obras_tce: list[dict],
+) -> list[dict]:
+    """
+    Para cada obra TCE, tenta encontrar correspondente ObrasGov usando
+    score multi-campo (nome, data, valor). Quando há match, associa
+    id_obras_tce e marca fonte como 'mista'.
+    Obras TCE sem match são incluídas como novas entradas.
+
+    IMPORTANTE: compara TCE apenas contra ObrasGov (não contra outras TCE).
+    """
+    matched_tce_ids: set[int] = set()
+    result = list(obras_gov)  # começa com todas as obras ObrasGov
+
+    for tce in obras_tce:
+        melhor_score = 0.0
+        melhor_gov = None
+
+        # Compara apenas contra obras ObrasGov, não contra o result inteiro
+        for gov in obras_gov:
+            score = _match_score(gov, tce)
+            if score > melhor_score:
+                melhor_score = score
+                melhor_gov = gov
+
+        if melhor_gov and melhor_score >= SIMILARITY_THRESHOLD:
+            melhor_gov["id_obras_tce"] = tce.get("id_obras_tce")
+            melhor_gov["fonte_principal"] = FontePrincipal.MISTA.value
+            # prefere % físico TCE se ObrasGov não tiver
+            if melhor_gov.get("percentual_fisico") is None:
+                melhor_gov["percentual_fisico"] = tce.get("percentual_fisico")
+            matched_tce_ids.add(tce.get("id_obras_tce"))  # type: ignore[arg-type]
+            logger.info(
+                "Match TCE→GOV: score=%.2f '%s' ↔ '%s'",
+                melhor_score,
+                (tce.get("nome") or "")[:60],
+                (melhor_gov.get("nome") or "")[:60],
+            )
+        else:
+            # TCE sem match → nova obra
+            result.append(tce)
+            logger.debug(
+                "TCE sem match (melhor=%.2f): '%s'",
+                melhor_score,
+                (tce.get("nome") or "")[:60],
+            )
+
+    logger.info(
+        "Matching: %d ObrasGov + %d TCE sem match = %d total (%d matched)",
+        len(obras_gov),
+        len(obras_tce) - len(matched_tce_ids),
+        len(result),
+        len(matched_tce_ids),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Pipeline principal CLEAN
+# ---------------------------------------------------------------------------
+
+
+def run_clean() -> dict:
+    """
+    Executa a camada CLEAN:
+    1. Lê RAW
+    2. Filtra Macaé
+    3. Normaliza e faz matching
+    4. Grava em clean.obras + clean.contratos + clean.obras_contratos
+    5. Normaliza convênios
+    """
+    counters = {"obras": 0, "contratos": 0, "convenios": 0}
+
+    with get_session() as session:
+        logger.info("CLEAN: carregando dados RAW…")
+        projetos = clean_repo.fetch_all_projetos_obrasgov(session)
+        ef_map = clean_repo.fetch_execucao_fisica_latest(session)
+        soma_empenhos = clean_repo.fetch_soma_empenhos(session)
+        contratos_map = clean_repo.fetch_contratos_obrasgov(session)
+        geo_map = clean_repo.fetch_geometria_by_id_unico(session)
+        tcerj_obras = clean_repo.fetch_all_tcerj_obras(session)
+        tcerj_paralisadas = clean_repo.fetch_all_tcerj_paralisadas_macae(session)
+        raw_convenios_sql = "SELECT * FROM raw.macae_convenios"
+        from sqlalchemy import text
+
+        raw_convenios = [dict(r) for r in session.execute(text(raw_convenios_sql)).mappings().all()]
+
+    logger.info(
+        "CLEAN: %d projetos ObrasGov, %d obras TCE, %d paralisadas TCE (Macaé)",
+        len(projetos),
+        len(tcerj_obras),
+        len(tcerj_paralisadas),
+    )
+    logger.info(
+        "CLEAN: dados auxiliares RAW — %d exec_fisica, %d empenhos(projetos), %d contratos(projetos), %d geometrias",
+        len(ef_map),
+        len(soma_empenhos),
+        len(contratos_map),
+        len(geo_map),
+    )
+
+    # --- Filtrar Macaé (ObrasGov) ---
+    # Inclui municípios extraídos do JSONB tomadores/executores porque
+    # raw.obrasgov_projetos não tem coluna municipio direta.
+    macae_gov = [
+        p
+        for p in projetos
+        if _is_macae(
+            [
+                p.get("endereco"),
+                p.get("nome"),
+                p.get("descricao"),
+                p.get("municipio"),
+                *_municipios_tomadores(p),
+            ]
+        )
+    ]
+    logger.info("CLEAN: %d projetos ObrasGov após filtro Macaé", len(macae_gov))
+
+    # Diagnóstico: amostra de municípios para entender por que o filtro falha
+    if not macae_gov and projetos:
+        sample_munis = set()
+        for p in projetos[:20]:
+            m = (p.get("municipio") or p.get("endereco") or "N/A")[:80]
+            sample_munis.add(m)
+        logger.warning("CLEAN: 0 projetos Macaé! Amostra de municípios/endereços dos 20 primeiros: %s", sample_munis)
+
+    # Diagnóstico: mostrar dados disponíveis para cada projeto Macaé
+    for p in macae_gov:
+        uid = p["id_unico"]
+        has_ef = uid in ef_map
+        has_emp = uid in soma_empenhos
+        has_cont = uid in contratos_map
+        has_geo = uid in geo_map
+        logger.info(
+            "CLEAN diag [%s] %s — exec_fisica=%s empenhos=%s contratos=%s geometria=%s situacao=%r",
+            uid,
+            (p.get("nome") or "?")[:60],
+            has_ef,
+            has_emp,
+            has_cont,
+            has_geo,
+            p.get("situacao"),
+        )
+
+    # --- Normalizar ObrasGov ---
+    obras_gov_norm = [_build_obra_from_obrasgov(p, ef_map, soma_empenhos, contratos_map, geo_map) for p in macae_gov]
+
+    # --- Normalizar TCE obras (internas do TCE-RJ, sem filtro de município) ---
+    obras_tce_norm = [_build_obra_from_tcerj(r) for r in tcerj_obras]
+
+    # --- Normalizar TCE paralisadas de Macaé (já filtradas por ente) ---
+    obras_paralisadas_norm = [_build_obra_from_tcerj_paralisada(r) for r in tcerj_paralisadas]
+
+    todas_tce = obras_tce_norm + obras_paralisadas_norm
+
+    # --- Matching ---
+    obras_finais = _match_obrasgov_com_tcerj(obras_gov_norm, todas_tce)
+    logger.info("CLEAN: %d obras após matching", len(obras_finais))
+
+    # --- Gravar clean.obras + contratos ---
+    with get_session() as session:
+        for obra in obras_finais:
+            contratos_raw = obra.pop("_contratos_raw", [])
+            clean_repo.upsert_obra_clean(session, obra)
+            counters["obras"] += 1
+
+            for cont in contratos_raw:
+                try:
+                    id_cont = clean_repo.insert_contrato_clean(session, obra.get("id_unico_obrasgov", ""), cont)
+                    clean_repo.link_obra_contrato(session, obra["id_obra_geoobras"], id_cont)
+                    counters["contratos"] += 1
+                except Exception as exc:
+                    logger.warning("CLEAN: falha ao inserir contrato %s: %s", cont.get("numero_contrato"), exc)
+
+    # --- Normalizar convênios ---
+    with get_session() as session:
+        for conv in raw_convenios:
+            try:
+                clean_repo.insert_convenio_clean(session, conv)
+                counters["convenios"] += 1
+            except Exception as exc:
+                logger.warning("CLEAN: falha ao inserir convênio %s: %s", conv.get("numero_instrumento"), exc)
+
+    logger.info("CLEAN concluído: %s", counters)
+    return counters
