@@ -60,10 +60,59 @@ async def lifespan(app: FastAPI):
 # App
 # ---------------------------------------------------------------------------
 
+_OPENAPI_TAGS = [
+    {
+        "name": "Obras",
+        "description": "Consulta e listagem de obras públicas monitoradas em Macaé/RJ.",
+    },
+    {
+        "name": "Insights",
+        "description": (
+            "Resumos analíticos gerados por IA a partir dos indicadores de cada obra. "
+            "Suporta os modos **auditor** (linguagem técnica) e **cidadão** (linguagem acessível)."
+        ),
+    },
+    {
+        "name": "Estatísticas",
+        "description": "Métricas agregadas e distribuições sobre o portfólio de obras.",
+    },
+    {
+        "name": "Operação",
+        "description": "Endpoints de saúde, monitoramento e disparo manual do pipeline ETL.",
+    },
+]
+
 app = FastAPI(
     title="GeoObras API",
-    description="API REST para monitoramento de obras públicas – Macaé/RJ",
+    description=(
+        "## Plataforma de Dados Abertos — Obras Públicas de Macaé/RJ\n\n"
+        "A **GeoObras API** consolida dados do ObrasGov.br e do TCE-RJ para oferecer acesso "
+        "transparente ao andamento de obras públicas no município de Macaé/RJ.\n\n"
+        "### Para quem é esta API?\n"
+        "- **Jornalistas e pesquisadores** — consulte, filtre e exporte dados com indicadores "
+        "financeiros e físicos.\n"
+        "- **Cidadãos** — acompanhe obras no seu bairro em linguagem simples via "
+        "`/insights?persona=cidadao`.\n"
+        "- **Gestores públicos e auditores** — acesse alertas de atraso, divergência "
+        "físico-financeira e risco de sobrecusto.\n\n"
+        "### Dados e Licença\n"
+        "Dados provenientes de fontes públicas brasileiras, disponibilizados sob "
+        "Creative Commons CC BY 4.0.\n\n"
+        "### Pipeline ETL\n"
+        "Atualizado diariamente via pipeline `raw → clean → analytics`. "
+        "Use `POST /api/v1/refresh` para registrar uma solicitação de atualização manual."
+    ),
     version="1.0.0",
+    contact={
+        "name": "GeoObras — Hackathon Duopen",
+        "url": "https://github.com/duopen/geoobras-backend",
+        "email": "geoobras@duopen.dev",
+    },
+    license_info={
+        "name": "Creative Commons Attribution 4.0 International",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+    },
+    openapi_tags=_OPENAPI_TAGS,
     lifespan=lifespan,
 )
 
@@ -93,7 +142,7 @@ def get_db():
 # ---------------------------------------------------------------------------
 
 
-@app.get("/health")
+@app.get("/health", tags=["Operação"])
 def health_check():
     return {"status": "ok", "banco": test_connection()}
 
@@ -102,6 +151,7 @@ def health_check():
     "/api/v1/obras",
     response_model=ObrasListResponse,
     summary="Lista obras públicas (com filtros opcionais)",
+    tags=["Obras"],
 )
 def list_obras(
     situacao: Optional[str] = Query(None, description="Filtra por status_obra"),
@@ -140,6 +190,7 @@ def list_obras(
     "/api/v1/obras/{id}",
     response_model=ObraDetalhe,
     summary="Detalhe completo de uma obra",
+    tags=["Obras"],
 )
 def get_obra(id: UUID, db: Session = Depends(get_db)):
     obra = query_obra_detalhe(db, str(id))
@@ -157,6 +208,7 @@ def get_obra(id: UUID, db: Session = Depends(get_db)):
     "/api/v1/obras/{id}/insights",
     response_model=InsightResponse,
     summary="Resumo analítico de uma obra gerado por LLM (com fallback determinístico)",
+    tags=["Insights"],
 )
 def get_obra_insights(
     id: UUID,
@@ -189,6 +241,7 @@ def get_obra_insights(
     "/api/v1/estatisticas",
     response_model=EstatisticasResponse,
     summary="Estatísticas agregadas das obras de Macaé",
+    tags=["Estatísticas"],
 )
 def get_estatisticas(db: Session = Depends(get_db)):
     stats = query_estatisticas(db)
@@ -200,6 +253,7 @@ def get_estatisticas(db: Session = Depends(get_db)):
     status_code=202,
     response_model=RefreshResponse,
     summary="Registra intenção de refresh do ETL (execução via cron)",
+    tags=["Operação"],
 )
 def refresh_etl(db: Session = Depends(get_db)):
     """
