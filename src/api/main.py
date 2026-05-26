@@ -21,11 +21,13 @@ _lc.setup_logging()
 
 from src.api.schemas import (
     EstatisticasResponse,
+    InsightResponse,
     ObraDetalhe,
     ObrasListResponse,
     ObraListItem,
     RefreshResponse,
 )
+from src.services.insights_service import get_obra_insight
 from src.infra.db import SessionLocal, test_connection
 from src.infra.repositories.analytics_repository import (
     query_estatisticas,
@@ -143,6 +145,34 @@ def get_obra(id: UUID, db: Session = Depends(get_db)):
     convenios = obra.pop("convenios", [])
     detalhe = ObraDetalhe(**obra, contratos=contratos, convenios=convenios)
     return detalhe
+
+
+@app.get(
+    "/api/v1/obras/{id}/insights",
+    response_model=InsightResponse,
+    summary="Resumo analítico de uma obra gerado por LLM (com fallback determinístico)",
+)
+def get_obra_insights(id: UUID, db: Session = Depends(get_db)):
+    obra = query_obra_detalhe(db, str(id))
+    if not obra:
+        raise HTTPException(status_code=404, detail=f"Obra {id} não encontrada.")
+
+    insight = get_obra_insight(str(id))
+
+    flags: dict = {
+        "possivel_atraso": obra.get("flag_possivel_atraso"),
+        "data_fim_pendente": obra.get("flag_data_fim_pendente"),
+        "populacao_suspeita": obra.get("flag_populacao_suspeita"),
+        "empregos_suspeitos": obra.get("flag_empregos_suspeitos"),
+        "dias_atraso": obra.get("dias_atraso"),
+    }
+
+    return InsightResponse(
+        resumo=insight.get("resumo", ""),
+        flags=flags,
+        fonte=insight.get("fonte", "fallback"),
+        gerado_em=datetime.now(),
+    )
 
 
 @app.get(

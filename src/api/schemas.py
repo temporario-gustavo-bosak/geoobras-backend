@@ -6,7 +6,7 @@ Schemas Pydantic v2 para request/response da API REST.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -129,3 +129,15 @@ class EstatisticasResponse(BaseModel):
 class RefreshResponse(BaseModel):
     message: str
     registrado_em: datetime
+
+
+# ---------------------------------------------------------------------------
+# Insights
+# ---------------------------------------------------------------------------
+
+
+class InsightResponse(BaseModel):
+    resumo: str
+    flags: dict[str, Any]
+    fonte: Literal["llm", "fallback"]
+    gerado_em: datetime
