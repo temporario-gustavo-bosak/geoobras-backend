@@ -154,12 +154,16 @@ def _fetch_obra_data(id_obra: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def get_obra_insight(id_obra: str) -> dict:
+def get_obra_insight(id_obra: str, obra: dict | None = None) -> dict:
     """
     Returns a LLM-generated audit insight or a deterministic fallback.
     Never raises — callers always receive a dict with 'fonte' in {'llm', 'fallback'}.
+
+    Pass a pre-fetched obra dict to avoid a redundant DB round-trip; if omitted,
+    the function fetches internally (backward-compatible).
     """
-    obra = _fetch_obra_data(id_obra)
+    if obra is None:
+        obra = _fetch_obra_data(id_obra)
     if not obra:
         return {"erro": "obra não encontrada", "fonte": "fallback", "id_obra_geoobras": id_obra}
 

@@ -31,6 +31,7 @@ from src.api.schemas import (
 from src.services.insights_service import get_obra_insight
 from src.infra.db import SessionLocal, test_connection
 from src.infra.repositories.analytics_repository import (
+    fetch_obra_insights,
     query_estatisticas,
     query_obra_detalhe,
     query_obras_list,
@@ -157,11 +158,11 @@ def get_obra(id: UUID, db: Session = Depends(get_db)):
     summary="Resumo analítico de uma obra gerado por LLM (com fallback determinístico)",
 )
 def get_obra_insights(id: UUID, db: Session = Depends(get_db)):
-    obra = query_obra_detalhe(db, str(id))
+    obra = fetch_obra_insights(db, str(id))
     if not obra:
         raise HTTPException(status_code=404, detail=f"Obra {id} não encontrada.")
 
-    insight = get_obra_insight(str(id))
+    insight = get_obra_insight(str(id), obra=obra)
 
     flags: dict = {
         "possivel_atraso": obra.get("flag_possivel_atraso"),
