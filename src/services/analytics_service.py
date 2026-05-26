@@ -6,6 +6,7 @@ Calcula métricas simples a partir das tabelas CLEAN e preenche analytics.*.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date
 from typing import Any
 
@@ -59,6 +60,54 @@ def _calc_dias_atraso(
 
 
 # ---------------------------------------------------------------------------
+# Z-score delay probability (population-level)
+# ---------------------------------------------------------------------------
+
+_MIN_SAMPLE = 3
+
+
+def _calc_probabilidade_atraso(metricas: list[dict]) -> dict[Any, float | None]:
+    """
+    Maps relative delay (dias_atraso / contractual_term_days) through a
+    population z-score + logistic function to produce a [0,1] probability.
+
+    Returns None for every obra when the sample is too small to form a
+    meaningful distribution (< _MIN_SAMPLE obras with a valid contractual term).
+    """
+    sample: list[tuple[Any, float]] = []
+    for m in metricas:
+        data_inicio: date | None = m.get("data_inicio")
+        data_fim: date | None = m.get("data_fim_prevista")
+        if not data_inicio or not data_fim:
+            continue
+        term_days = (data_fim - data_inicio).days
+        if term_days <= 0:
+            continue
+        dias = m.get("dias_atraso") or 0
+        sample.append((m["id_obra_geoobras"], dias / term_days))
+
+    if len(sample) < _MIN_SAMPLE:
+        logger.warning(
+            "probabilidade_atraso: insufficient sample (%d obras with valid term, min=%d)",
+            len(sample),
+            _MIN_SAMPLE,
+        )
+        return {m["id_obra_geoobras"]: None for m in metricas}
+
+    delays = [rd for _, rd in sample]
+    mean = sum(delays) / len(delays)
+    variance = sum((d - mean) ** 2 for d in delays) / len(delays)
+    std = math.sqrt(variance)
+
+    result: dict[Any, float | None] = {m["id_obra_geoobras"]: None for m in metricas}
+    for id_obra, rd in sample:
+        z = (rd - mean) / std if std > 0 else 0.0
+        result[id_obra] = round(1.0 / (1.0 + math.exp(-z)), 4)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Pipeline principal Analytics
 # ---------------------------------------------------------------------------
 
@@ -75,26 +124,24 @@ def run_analytics() -> dict:
 
     logger.info("Analytics: processando %d obras…", len(obras))
 
-    with get_session() as session:
-        for obra in obras:
-            id_obra = obra["id_obra_geoobras"]
-
-            pct_desembolso = _calc_pct_desembolso(
-                obra.get("valor_total_contratado"),
-                obra.get("valor_pago_acumulado"),
-            )
-
-            dias_atraso, flag_atraso = _calc_dias_atraso(
-                obra.get("data_fim_prevista"),
-                obra.get("data_fim_real"),
-                obra.get("status_obra"),
-            )
-
-            metrica: dict[str, Any] = {
+    # Pass 1: compute per-obra metrics (needed as input to the population z-score)
+    metricas: list[dict[str, Any]] = []
+    for obra in obras:
+        id_obra = obra["id_obra_geoobras"]
+        dias_atraso, flag_atraso = _calc_dias_atraso(
+            obra.get("data_fim_prevista"),
+            obra.get("data_fim_real"),
+            obra.get("status_obra"),
+        )
+        metricas.append(
+            {
                 "id_obra_geoobras": id_obra,
                 "valor_total_contratado": obra.get("valor_total_contratado"),
                 "valor_pago_acumulado": obra.get("valor_pago_acumulado"),
-                "percentual_desembolso": pct_desembolso,
+                "percentual_desembolso": _calc_pct_desembolso(
+                    obra.get("valor_total_contratado"),
+                    obra.get("valor_pago_acumulado"),
+                ),
                 "percentual_fisico": obra.get("percentual_fisico"),
                 "data_inicio": obra.get("data_inicio"),
                 "data_fim_prevista": obra.get("data_fim_prevista"),
@@ -102,16 +149,27 @@ def run_analytics() -> dict:
                 "dias_atraso": dias_atraso,
                 "flag_possivel_atraso": flag_atraso,
             }
+        )
+
+    # Pass 2: population-level z-score across all Macaé obras
+    proba_map = _calc_probabilidade_atraso(metricas)
+
+    # Pass 3: upsert with complete metrics (including risk columns)
+    with get_session() as session:
+        for metrica in metricas:
+            id_obra = metrica["id_obra_geoobras"]
+            prob = proba_map.get(id_obra)
+            metrica["probabilidade_atraso"] = prob
+            metrica["metodo_score"] = "heuristica_zscore_v1" if prob is not None else None
 
             upsert_metrica(session, metrica)
             counters["metricas"] += 1
 
-            # Estrutura base de recorrência territorial (sem contagens – Mês 2)
             upsert_recorrencia_territorial(
                 session,
                 id_obra=id_obra,
-                bairro=None,  # bairro será enriquecido no Mês 2
-                geom=None,  # geom vem de clean.obras se necessário
+                bairro=None,
+                geom=None,
             )
             counters["recorrencia"] += 1
 
