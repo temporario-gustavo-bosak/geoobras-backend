@@ -10,6 +10,7 @@ from src.services.insights_service import (
     _SYSTEM_PROMPT,
     _SYSTEM_PROMPT_CIDADAO,
     _build_fallback,
+    _build_fallback_cidadao,
     _build_user_message,
     get_obra_insight,
 )
@@ -315,3 +316,77 @@ def test_llm_down_cidadao_returns_citizen_fallback_without_raising() -> None:
     # citizen fallback must not contain audit-specific jargon
     assert "Classe de alerta:" not in result["resumo"]
     assert "Divergência físico-financeira:" not in result["resumo"]
+
+
+# ---------------------------------------------------------------------------
+# T-06: additive ceiling + insolvency projection in user message and fallbacks
+# ---------------------------------------------------------------------------
+
+
+def _mock_obra_with_financial_health() -> dict:
+    return {
+        **_mock_obra(),
+        "pct_aditivo": 30.0,
+        "flag_alerta_aditivo": "vermelho",
+        "burn_rate_mensal_pct": 5.0,
+        "meses_para_exaustao": 8.0,
+        "pct_fisico_estimado_exaustao": 33.3,
+        "flag_risco_insolvencia": True,
+    }
+
+
+def _mock_obra_null_financial_health() -> dict:
+    return {
+        **_mock_obra(),
+        "pct_aditivo": None,
+        "flag_alerta_aditivo": None,
+        "burn_rate_mensal_pct": None,
+        "meses_para_exaustao": None,
+        "pct_fisico_estimado_exaustao": None,
+        "flag_risco_insolvencia": None,
+    }
+
+
+def test_build_user_message_contains_additive_ceiling_line() -> None:
+    """Happy: _build_user_message must include the additive ceiling line with pct and alert flag."""
+    msg = _build_user_message(_mock_obra_with_financial_health())
+
+    assert "Aditivos contratuais:" in msg
+    assert "30.0%" in msg
+    assert "teto legal 25%" in msg
+    assert "vermelho" in msg
+
+
+def test_build_user_message_contains_insolvency_projection_line() -> None:
+    """Happy: _build_user_message must include the projection line with months and physical pct."""
+    msg = _build_user_message(_mock_obra_with_financial_health())
+
+    assert "Projeção (ritmo médio):" in msg
+    assert "8.0 meses" in msg
+    assert "33.3%" in msg
+    assert "risco de insolvência: sim" in msg
+
+
+def test_build_user_message_null_fields_render_nd_without_exception() -> None:
+    """Edge: all financial-health fields None → both lines render 'N/D', no exception."""
+    msg = _build_user_message(_mock_obra_null_financial_health())
+
+    assert "Aditivos contratuais: N/D" in msg
+    assert "Projeção (ritmo médio): N/D" in msg
+    assert "risco de insolvência: N/D" in msg
+
+
+def test_build_fallback_null_fields_returns_fallback_fonte() -> None:
+    """Edge: _build_fallback with null financial-health fields must not raise and fonte='fallback'."""
+    result = _build_fallback(_mock_obra_null_financial_health())
+
+    assert result["fonte"] == "fallback"
+    assert isinstance(result["resumo"], str) and result["resumo"]
+
+
+def test_build_fallback_cidadao_null_fields_returns_fallback_fonte() -> None:
+    """Edge: _build_fallback_cidadao with null financial-health fields must not raise and fonte='fallback'."""
+    result = _build_fallback_cidadao(_mock_obra_null_financial_health())
+
+    assert result["fonte"] == "fallback"
+    assert isinstance(result["resumo"], str) and result["resumo"]

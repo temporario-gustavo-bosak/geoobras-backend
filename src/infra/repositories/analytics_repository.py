@@ -273,7 +273,13 @@ def fetch_obra_insights(session: Session, id_obra: str) -> dict | None:
             m.flag_possivel_atraso,
             m.risco_sobrecusto,
             m.classe_alerta,
-            m.metodo_score
+            m.metodo_score,
+            m.pct_aditivo,
+            m.flag_alerta_aditivo,
+            m.burn_rate_mensal_pct,
+            m.meses_para_exaustao,
+            m.pct_fisico_estimado_exaustao,
+            m.flag_risco_insolvencia
         FROM clean.obras o
         LEFT JOIN analytics.metricas_obra m ON m.id_obra_geoobras = o.id_obra_geoobras
         WHERE o.id_obra_geoobras = :id

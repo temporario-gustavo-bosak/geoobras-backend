@@ -29,10 +29,14 @@ _SYSTEM_PROMPT = (
     "1. Use SOMENTE os dados fornecidos. Nunca invente ou suponha informações ausentes.\n"
     "2. Destaque obrigatoriamente a divergência físico-financeira "
     "(diferença entre execução física e desembolso financeiro).\n"
-    "3. Se houver alerta de atraso, mencione-o explicitamente com o número de dias.\n"
-    "4. Responda exclusivamente em português do Brasil, linguagem técnica e objetiva.\n"
-    "5. Não emita julgamentos jurídicos nem recomendações sem base direta nos dados.\n"
-    "6. Limite a resposta a 3–4 parágrafos concisos."
+    "3. Se o percentual de aditivos superar 25% (teto legal — Lei 14.133/2021 art. 125), "
+    "destaque explicitamente essa irregularidade com o valor exato.\n"
+    "4. Se houver risco de insolvência financeira (orçamento estimado para esgotar antes da "
+    "conclusão física), mencione os meses projetados até esgotamento e o percentual físico esperado.\n"
+    "5. Se houver alerta de atraso, mencione-o explicitamente com o número de dias.\n"
+    "6. Responda exclusivamente em português do Brasil, linguagem técnica e objetiva.\n"
+    "7. Não emita julgamentos jurídicos nem recomendações sem base direta nos dados.\n"
+    "8. Limite a resposta a 3–4 parágrafos concisos."
 )
 
 _SYSTEM_PROMPT_CIDADAO = (
@@ -44,9 +48,13 @@ _SYSTEM_PROMPT_CIDADAO = (
     "40% de execução física para quem mora no bairro.\n"
     "3. Se a obra estiver atrasada, explique o impacto para os moradores e a comunidade, "
     "mencionando o número de dias de atraso.\n"
-    "4. Use linguagem simples, direta e acessível ao público geral. Evite jargão técnico e termos de auditoria.\n"
-    "5. Não faça julgamentos jurídicos nem acusações sem base direta nos dados.\n"
-    "6. Limite a resposta a 3–4 parágrafos curtos."
+    "4. Se o contrato aumentou além do valor original, explique em linguagem simples: "
+    "'o contrato desta obra já aumentou X% além do valor combinado inicialmente'.\n"
+    "5. Se houver risco de o dinheiro acabar antes da obra terminar, explique assim: "
+    "'com o ritmo atual de gastos, o orçamento pode se esgotar antes de a obra ser concluída'.\n"
+    "6. Use linguagem simples, direta e acessível ao público geral. Evite jargão técnico e termos de auditoria.\n"
+    "7. Não faça julgamentos jurídicos nem acusações sem base direta nos dados.\n"
+    "8. Limite a resposta a 3–4 parágrafos curtos."
 )
 
 
@@ -82,12 +90,35 @@ def _build_user_message(obra: dict) -> str:
     risco: float | None = obra.get("risco_sobrecusto")
     valor_contratado: float | None = obra.get("valor_total_contratado")
     valor_pago: float | None = obra.get("valor_pago_acumulado")
+    pct_aditivo: float | None = obra.get("pct_aditivo")
+    flag_alerta_aditivo: str | None = obra.get("flag_alerta_aditivo")
+    meses_exaustao: float | None = obra.get("meses_para_exaustao")
+    pct_fisico_exaustao: float | None = obra.get("pct_fisico_estimado_exaustao")
+    flag_insolvencia: bool | None = obra.get("flag_risco_insolvencia")
 
     div_str = (
         f"Divergência físico-financeira: {divergencia:+.1f} p.p. (positivo = desembolso à frente da execução física)"
         if divergencia is not None
         else "Divergência: N/D"
     )
+
+    if pct_aditivo is not None:
+        aditivo_str = (
+            f"Aditivos contratuais: {pct_aditivo:.1f}% do valor original (teto legal 25%)"
+            f" — alerta: {flag_alerta_aditivo or 'N/D'}"
+        )
+    else:
+        aditivo_str = "Aditivos contratuais: N/D"
+
+    if meses_exaustao is not None and pct_fisico_exaustao is not None:
+        insolvencia_str = (
+            f"Projeção (ritmo médio): orçamento esgota em ~{meses_exaustao:.1f} meses,"
+            f" obra em ~{pct_fisico_exaustao:.1f}% físico"
+            f" — risco de insolvência: {'sim' if flag_insolvencia else 'não'}"
+        )
+    else:
+        insolvencia_str = "Projeção (ritmo médio): N/D — risco de insolvência: N/D"
+
     linhas = [
         f"Obra: {obra.get('nome') or 'sem nome'}",
         f"Status: {obra.get('status_obra') or 'desconhecido'}",
@@ -99,6 +130,8 @@ def _build_user_message(obra: dict) -> str:
         f"Classe de alerta: {obra.get('classe_alerta') or 'N/D'}",
         f"Valor contratado: R$ {valor_contratado:,.2f}" if valor_contratado is not None else "Valor contratado: N/D",
         f"Valor pago acumulado: R$ {valor_pago:,.2f}" if valor_pago is not None else "Valor pago: N/D",
+        aditivo_str,
+        insolvencia_str,
     ]
     return "\n".join(linhas)
 
@@ -129,6 +162,23 @@ def _build_fallback(obra: dict) -> dict:
     risco: float | None = obra.get("risco_sobrecusto")
     if risco is not None:
         partes.append(f"Risco de sobrecusto estimado: {risco * 100:.1f}%.")
+
+    pct_aditivo: float | None = obra.get("pct_aditivo")
+    flag_alerta_aditivo: str | None = obra.get("flag_alerta_aditivo")
+    if pct_aditivo is not None:
+        partes.append(
+            f"Aditivo contratual: {pct_aditivo:.1f}% do valor original"
+            f" — alerta: {flag_alerta_aditivo or 'N/D'}."
+        )
+
+    flag_insolvencia: bool | None = obra.get("flag_risco_insolvencia")
+    meses_exaustao: float | None = obra.get("meses_para_exaustao")
+    pct_fisico_exaustao: float | None = obra.get("pct_fisico_estimado_exaustao")
+    if flag_insolvencia and meses_exaustao is not None:
+        partes.append(
+            f"Risco de insolvência: orçamento estimado para esgotar em {meses_exaustao:.1f} meses,"
+            f" com obra em ~{pct_fisico_exaustao:.1f}% físico."
+        )
 
     return {
         "resumo": " ".join(partes),
@@ -164,6 +214,20 @@ def _build_fallback_cidadao(obra: dict) -> dict:
         partes.append(
             f"A obra está {dias} dias atrasada em relação ao prazo original, "
             f"o que pode adiar os benefícios esperados pela comunidade."
+        )
+
+    pct_aditivo: float | None = obra.get("pct_aditivo")
+    if pct_aditivo is not None and pct_aditivo > 0:
+        partes.append(
+            f"O contrato desta obra já aumentou {pct_aditivo:.1f}% além do valor original contratado."
+        )
+
+    flag_insolvencia: bool | None = obra.get("flag_risco_insolvencia")
+    meses_exaustao: float | None = obra.get("meses_para_exaustao")
+    if flag_insolvencia and meses_exaustao is not None:
+        partes.append(
+            f"Com o ritmo atual de gastos, o orçamento pode se esgotar em cerca de "
+            f"{meses_exaustao:.1f} meses, antes de a obra ser concluída."
         )
 
     return {
