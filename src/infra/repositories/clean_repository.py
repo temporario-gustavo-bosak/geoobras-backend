@@ -115,7 +115,7 @@ UPSERT_OBRA_CLEAN = text("""
         :valor_contratado, :valor_pago, :valor_previsto,
         :latitude, :longitude, :geom, :fonte, NOW()
     )
-    ON CONFLICT (id_obra_geoobras) DO UPDATE SET
+    ON CONFLICT (id_unico_obrasgov) DO UPDATE SET
         status_obra          = EXCLUDED.status_obra,
         data_fim_real        = EXCLUDED.data_fim_real,
         percentual_fisico    = EXCLUDED.percentual_fisico,

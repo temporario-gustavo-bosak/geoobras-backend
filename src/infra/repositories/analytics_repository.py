@@ -133,22 +133,15 @@ def upsert_metrica(session: Session, m: dict[str, Any]) -> None:
 
 UPSERT_RECORRENCIA = text("""
     INSERT INTO analytics.recorrencia_territorial (
-        id_obra_geoobras, bairro, geom,
-        qtd_obras_proximas, qtd_bairro, flag_recorrencia,
-        raio_metros, janela_anos
+        id_obra_geoobras, bairro, geom, recorrencia_count
     ) VALUES (
-        :id_obra, :bairro, :geom,
-        :qtd_proximas, :qtd_bairro, :flag_recorrencia,
-        :raio_metros, :janela_anos
+        :id_obra, :bairro, :geom, :recorrencia_count
     )
     ON CONFLICT (id_obra_geoobras) DO UPDATE SET
-        bairro             = EXCLUDED.bairro,
-        geom               = EXCLUDED.geom,
-        qtd_obras_proximas = EXCLUDED.qtd_obras_proximas,
-        qtd_bairro         = EXCLUDED.qtd_bairro,
-        flag_recorrencia   = EXCLUDED.flag_recorrencia,
-        raio_metros        = EXCLUDED.raio_metros,
-        janela_anos        = EXCLUDED.janela_anos
+        bairro            = EXCLUDED.bairro,
+        geom              = EXCLUDED.geom,
+        recorrencia_count = EXCLUDED.recorrencia_count,
+        calculado_em      = NOW()
 """)
 
 
@@ -157,11 +150,7 @@ def upsert_recorrencia_territorial(
     id_obra: UUID | str,
     bairro: str | None,
     geom: str | None,
-    qtd_proximas: int = 1,
-    qtd_bairro: int = 1,
-    flag_recorrencia: bool = False,
-    raio_metros: float = 50.0,
-    janela_anos: int = 10,
+    recorrencia_count: int = 0,
 ) -> None:
     session.execute(
         UPSERT_RECORRENCIA,
@@ -169,11 +158,7 @@ def upsert_recorrencia_territorial(
             "id_obra": str(id_obra),
             "bairro": bairro,
             "geom": geom,
-            "qtd_proximas": qtd_proximas,
-            "qtd_bairro": qtd_bairro,
-            "flag_recorrencia": flag_recorrencia,
-            "raio_metros": raio_metros,
-            "janela_anos": janela_anos,
+            "recorrencia_count": recorrencia_count,
         },
     )
 
@@ -247,7 +232,7 @@ def query_obras_list(
         FROM clean.obras o
         LEFT JOIN analytics.metricas_obra m ON m.id_obra_geoobras = o.id_obra_geoobras
         {where_sql}
-        ORDER BY o.data_ultima_atualizacao DESC NULLS LAST
+        ORDER BY o.atualizado_em DESC NULLS LAST
         LIMIT :limit OFFSET :offset
     """)
     params.update({"limit": page_size, "offset": offset})
@@ -313,8 +298,8 @@ def query_obra_detalhe(session: Session, id_obra: str) -> dict | None:
     contratos_sql = text("""
         SELECT c.*
         FROM clean.contratos c
-        JOIN clean.obras_contratos oc ON oc.id_contrato_geoobras = c.id_contrato_geoobras
-        WHERE oc.id_obra_geoobras = :id
+        JOIN clean.obras_contratos oc ON oc.id_contrato = c.id
+        WHERE oc.id_obra = :id
     """)
     contratos = session.execute(contratos_sql, {"id": id_obra}).mappings().all()
     obra["contratos"] = [dict(c) for c in contratos]
@@ -373,11 +358,21 @@ def insert_etl_log(
 ) -> None:
     import json
 
-    det_json = json.dumps(detalhes, default=str) if isinstance(detalhes, dict) else detalhes
+    erros_val: str | None = None
+    duracao_val: float | None = None
+
+    if isinstance(detalhes, dict):
+        erros_list = detalhes.get("erros")
+        if erros_list:
+            erros_val = json.dumps(erros_list, default=str) if isinstance(erros_list, list) else str(erros_list)
+        duracao_val = detalhes.get("duracao_segundos")
+    elif isinstance(detalhes, str):
+        erros_val = detalhes
+
     session.execute(
         text("""
-        INSERT INTO etl_execucao (fonte, status, detalhes)
-        VALUES (:fonte, :status, CAST(:detalhes AS jsonb))
+        INSERT INTO etl_execucao (fonte, status, erros, duracao_s)
+        VALUES (:fonte, :status, :erros, :duracao_s)
     """),
-        {"fonte": fonte, "status": status, "detalhes": det_json},
+        {"fonte": fonte, "status": status, "erros": erros_val, "duracao_s": duracao_val},
     )

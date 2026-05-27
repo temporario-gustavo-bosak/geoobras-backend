@@ -502,11 +502,7 @@ def run_analytics() -> dict:
                 id_obra=id_obra,
                 bairro=rec.get("bairro"),
                 geom=obra.get("geom"),
-                qtd_proximas=recorrencia_count,
-                qtd_bairro=rec.get("qtd_bairro", 1),
-                flag_recorrencia=rec.get("flag_recorrencia", False),
-                raio_metros=rec.get("raio_metros", _RAIO_METROS),
-                janela_anos=rec.get("janela_anos", _JANELA_ANOS),
+                recorrencia_count=recorrencia_count,
             )
             counters["recorrencia"] += 1
 
