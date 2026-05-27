@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
+from typing import Any
 from unittest.mock import patch
 
 from src.domain.enums import FontePrincipal
-from src.services.clean_service import _match_obrasgov_com_tcerj
+from src.services.clean_service import _build_obra_from_obrasgov, _match_obrasgov_com_tcerj
 
 
 # ---------------------------------------------------------------------------
@@ -142,3 +144,59 @@ def test_low_name_jaccard_blocks_match_despite_high_total_score() -> None:
     mock_score.assert_not_called()
     assert len(result) == 2
     assert gov["id_obras_tce"] is None
+
+
+# ---------------------------------------------------------------------------
+# HF-1: valor_previsto_original extraído de fontes_de_recurso
+# ---------------------------------------------------------------------------
+
+
+def _minimal_proj(fontes: Any = None) -> dict:
+    return {
+        "id_unico": "TEST001",
+        "nome": "Obra Teste HF-1",
+        "situacao": None,
+        "data_inicial_efetiva": None,
+        "data_inicial_prevista": None,
+        "data_final_prevista": None,
+        "data_final_efetiva": None,
+        "descricao": None,
+        "endereco": None,
+        "populacao_beneficiada": None,
+        "qtd_empregos_gerados": None,
+        "fontes_de_recurso": fontes,
+    }
+
+
+def _call_build(proj: dict) -> dict:
+    return _build_obra_from_obrasgov(proj, ef_map={}, soma_empenhos={}, contratos_map={}, geo_map={})
+
+
+def test_valor_previsto_original_summed_from_fontes() -> None:
+    """Happy: two funding sources → valor_previsto_original is their sum."""
+    fontes = [
+        {"valorInvestimentoPrevisto": 600_000.0},
+        {"valorInvestimentoPrevisto": 400_000.0},
+    ]
+    result = _call_build(_minimal_proj(fontes=fontes))
+    assert result["valor_previsto_original"] == 1_000_000.0
+
+
+def test_valor_previsto_original_none_when_fontes_absent() -> None:
+    """Edge: fontes_de_recurso is None → valor_previsto_original is None, no exception."""
+    result = _call_build(_minimal_proj(fontes=None))
+    assert result["valor_previsto_original"] is None
+
+
+def test_valor_previsto_original_none_when_all_values_null() -> None:
+    """Edge: all valorInvestimentoPrevisto are None → sum is 0 → coerced to None."""
+    fontes = [{"valorInvestimentoPrevisto": None}, {"valorInvestimentoPrevisto": None}]
+    result = _call_build(_minimal_proj(fontes=fontes))
+    assert result["valor_previsto_original"] is None
+
+
+def test_valor_previsto_original_parsed_from_json_string() -> None:
+    """Edge: fontes_de_recurso arrives as a JSON string (defensive path) → parsed and summed."""
+    fontes_str = json.dumps([{"valorInvestimentoPrevisto": 750_000.0}])
+    result = _call_build(_minimal_proj(fontes=fontes_str))
+    assert result["valor_previsto_original"] == 750_000.0

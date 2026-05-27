@@ -248,6 +248,19 @@ def _build_obra_from_obrasgov(
         lat, lon = extract_lat_lon(wkt)
         geom_wkt = wkt_to_geom_text(wkt)
 
+    # valor_previsto_original — soma de valorInvestimentoPrevisto por fonte de recurso.
+    # O campo fontesDeRecurso da API é persistido como JSONB em raw.obrasgov_projetos.fontes_de_recurso
+    # e desserializado automaticamente pelo psycopg2; o isinstance(str) cobre re-leituras via texto.
+    fontes = proj.get("fontes_de_recurso") or []
+    if isinstance(fontes, str):
+        try:
+            fontes = json.loads(fontes)
+        except (ValueError, TypeError):
+            fontes = []
+    valor_previsto_original = (
+        sum((f.get("valorInvestimentoPrevisto") or 0) for f in fontes if isinstance(f, dict)) or None
+    )
+
     # Flags qualidade
     pop = proj.get("populacao_beneficiada")
     emp = proj.get("qtd_empregos_gerados")
@@ -275,7 +288,7 @@ def _build_obra_from_obrasgov(
         "flag_empregos_suspeitos": emp is not None and emp == 0,
         "valor_total_contratado": valor_global,
         "valor_pago_acumulado": valor_pago,
-        "valor_previsto_original": None,  # ObrasGov não tem campo direto
+        "valor_previsto_original": valor_previsto_original,
         "latitude": lat,
         "longitude": lon,
         "geom": geom_wkt,
