@@ -37,3 +37,6 @@ Thumbs.db
 # Data (inputs tracked intentionally; outputs/logs not)
 data/output/
 *.log
+
+# Claude
+CLAUDE.md
