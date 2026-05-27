@@ -8,6 +8,7 @@ from src.infra.repositories.analytics_repository import fetch_obras_para_analyti
 
 MIGRATION_PATH = Path(__file__).parents[2] / "sql" / "002_analytics_risco.sql"
 MIGRATION_FINANCIAL_HEALTH_PATH = Path(__file__).parents[2] / "sql" / "004_financial_health.sql"
+MIGRATION_IEC_PATH = Path(__file__).parents[2] / "sql" / "005_iec.sql"
 
 _FINANCIAL_HEALTH_COLUMNS = {
     "pct_aditivo",
@@ -212,3 +213,54 @@ def test_upsert_metrica_financial_health_keys_default_correctly() -> None:
     # existing params unaffected
     assert params["flag_atraso"] is False
     assert params["divergencia"] is None
+
+
+# ---------------------------------------------------------------------------
+# T-01: 005_iec.sql migration idempotency
+# ---------------------------------------------------------------------------
+
+
+def test_iec_migration_uses_add_column_if_not_exists() -> None:
+    """ADD COLUMN in 005_iec.sql must carry IF NOT EXISTS."""
+    sql = MIGRATION_IEC_PATH.read_text(encoding="utf-8")
+    bare = re.findall(r"ADD\s+COLUMN\s+(?!IF\s+NOT\s+EXISTS)", sql, re.IGNORECASE)
+    assert bare == [], f"Found ADD COLUMN without IF NOT EXISTS: {bare}"
+
+
+def test_iec_migration_uses_create_index_if_not_exists() -> None:
+    """CREATE INDEX in 005_iec.sql must carry IF NOT EXISTS."""
+    sql = MIGRATION_IEC_PATH.read_text(encoding="utf-8")
+    bare = re.findall(r"CREATE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS)", sql, re.IGNORECASE)
+    assert bare == [], f"Found CREATE INDEX without IF NOT EXISTS: {bare}"
+
+
+def test_iec_migration_declares_iec_score_column() -> None:
+    """iec_score column name appears in 005_iec.sql."""
+    sql = MIGRATION_IEC_PATH.read_text(encoding="utf-8").lower()
+    assert "iec_score" in sql
+
+
+# ---------------------------------------------------------------------------
+# T-01: upsert_metrica passes iec_score
+# ---------------------------------------------------------------------------
+
+
+def test_upsert_metrica_passes_iec_score() -> None:
+    """Happy path: upsert_metrica forwards iec_score to session.execute."""
+    session = MagicMock()
+    m = {**_base_metrica(), "iec_score": 72.5}
+
+    upsert_metrica(session, m)
+
+    params = session.execute.call_args.args[1]
+    assert params["iec_score"] == 72.5
+
+
+def test_upsert_metrica_iec_score_defaults_to_none() -> None:
+    """Edge case: missing iec_score defaults to None — existing fields unaffected."""
+    session = MagicMock()
+    upsert_metrica(session, _base_metrica())
+
+    params = session.execute.call_args.args[1]
+    assert params["iec_score"] is None
+    assert params["flag_atraso"] is False

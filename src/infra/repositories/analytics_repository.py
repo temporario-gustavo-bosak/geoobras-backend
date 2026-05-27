@@ -58,6 +58,7 @@ UPSERT_METRICA = text("""
         pct_aditivo, flag_alerta_aditivo,
         burn_rate_mensal_pct, meses_para_exaustao,
         pct_fisico_estimado_exaustao, flag_risco_insolvencia,
+        iec_score,
         calculado_em
     ) VALUES (
         :id_obra,
@@ -70,6 +71,7 @@ UPSERT_METRICA = text("""
         :pct_aditivo, :flag_alerta_aditivo,
         :burn_rate_mensal_pct, :meses_para_exaustao,
         :pct_fisico_estimado_exaustao, :flag_risco_insolvencia,
+        :iec_score,
         NOW()
     )
     ON CONFLICT (id_obra_geoobras) DO UPDATE SET
@@ -90,6 +92,7 @@ UPSERT_METRICA = text("""
         meses_para_exaustao            = EXCLUDED.meses_para_exaustao,
         pct_fisico_estimado_exaustao   = EXCLUDED.pct_fisico_estimado_exaustao,
         flag_risco_insolvencia         = EXCLUDED.flag_risco_insolvencia,
+        iec_score                      = EXCLUDED.iec_score,
         calculado_em                   = NOW()
 """)
 
@@ -119,6 +122,7 @@ def upsert_metrica(session: Session, m: dict[str, Any]) -> None:
             "meses_para_exaustao": m.get("meses_para_exaustao"),
             "pct_fisico_estimado_exaustao": m.get("pct_fisico_estimado_exaustao"),
             "flag_risco_insolvencia": m.get("flag_risco_insolvencia", False),
+            "iec_score": m.get("iec_score"),
         },
     )
 
