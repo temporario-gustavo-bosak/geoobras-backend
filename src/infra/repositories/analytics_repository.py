@@ -26,6 +26,7 @@ def fetch_obras_para_analytics(session: Session) -> list[dict]:
             o.id_obra_geoobras,
             o.valor_total_contratado,
             o.valor_pago_acumulado,
+            o.valor_previsto_original,
             o.percentual_fisico,
             o.data_inicio,
             o.data_fim_prevista,

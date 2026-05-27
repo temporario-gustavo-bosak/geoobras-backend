@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from src.infra.repositories.analytics_repository import upsert_metrica
+from src.infra.repositories.analytics_repository import fetch_obras_para_analytics, upsert_metrica
 
 MIGRATION_PATH = Path(__file__).parents[2] / "sql" / "002_analytics_risco.sql"
 
@@ -98,3 +98,35 @@ def test_upsert_metrica_risk_keys_default_to_none() -> None:
     assert params["metodo_score"] is None
     # existing params still present
     assert params["flag_atraso"] is False
+
+
+# ---------------------------------------------------------------------------
+# T-01: fetch_obras_para_analytics exposes valor_previsto_original
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_obras_para_analytics_includes_valor_previsto_original() -> None:
+    """Happy path: the returned dict must contain 'valor_previsto_original' (needed for KF-B additive calc)."""
+    session = MagicMock()
+    fake_row = {
+        "id_obra_geoobras": "aaaaaaaa-0000-0000-0000-000000000001",
+        "valor_total_contratado": 1_200_000.0,
+        "valor_pago_acumulado": 600_000.0,
+        "valor_previsto_original": 1_000_000.0,
+        "percentual_fisico": 50.0,
+        "data_inicio": None,
+        "data_fim_prevista": None,
+        "data_fim_real": None,
+        "status_obra": "em_execucao",
+        "latitude": None,
+        "longitude": None,
+        "geom": None,
+        "bairro": None,
+    }
+    session.execute.return_value.mappings.return_value.all.return_value = [fake_row]
+
+    result = fetch_obras_para_analytics(session)
+
+    assert len(result) == 1
+    assert "valor_previsto_original" in result[0]
+    assert result[0]["valor_previsto_original"] == 1_000_000.0
