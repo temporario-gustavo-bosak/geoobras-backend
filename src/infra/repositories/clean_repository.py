@@ -104,7 +104,7 @@ UPSERT_OBRA_CLEAN = text("""
         populacao_beneficiada, flag_populacao_suspeita,
         empregos_gerados, flag_empregos_suspeitos,
         valor_total_contratado, valor_pago_acumulado, valor_previsto_original,
-        latitude, longitude, geom, fonte_principal, data_ultima_atualizacao
+        latitude, longitude, geom, fonte_principal, atualizado_em
     ) VALUES (
         :id_obra, :id_obrasgov, :id_tce,
         :nome, :descricao, :municipio, :uf, :cod_municipio, :bairro, :logradouro,
@@ -116,14 +116,14 @@ UPSERT_OBRA_CLEAN = text("""
         :latitude, :longitude, :geom, :fonte, NOW()
     )
     ON CONFLICT (id_obra_geoobras) DO UPDATE SET
-        status_obra              = EXCLUDED.status_obra,
-        data_fim_real            = EXCLUDED.data_fim_real,
-        percentual_fisico        = EXCLUDED.percentual_fisico,
-        valor_pago_acumulado     = EXCLUDED.valor_pago_acumulado,
-        latitude                 = EXCLUDED.latitude,
-        longitude                = EXCLUDED.longitude,
-        geom                     = EXCLUDED.geom,
-        data_ultima_atualizacao  = NOW()
+        status_obra          = EXCLUDED.status_obra,
+        data_fim_real        = EXCLUDED.data_fim_real,
+        percentual_fisico    = EXCLUDED.percentual_fisico,
+        valor_pago_acumulado = EXCLUDED.valor_pago_acumulado,
+        latitude             = EXCLUDED.latitude,
+        longitude            = EXCLUDED.longitude,
+        geom                 = EXCLUDED.geom,
+        atualizado_em        = NOW()
 """)
 
 
@@ -168,44 +168,36 @@ def upsert_obra_clean(session: Session, obra: dict[str, Any]) -> None:
 
 INSERT_CONTRATO_CLEAN = text("""
     INSERT INTO clean.contratos (
-        id_contrato_obrasgov, numero_contrato, objeto,
-        valor_contratado, valor_total_atualizado,
-        data_inicio_vigencia, data_fim_vigencia,
-        municipio, codigo_municipio
+        id_obra_geoobras, numero_contrato,
+        valor_global, valor_acumulado, vigencia_fim, situacao
     ) VALUES (
-        :id_contrato_obrasgov, :numero_contrato, :objeto,
-        :valor_contratado, :valor_total_atualizado,
-        :data_inicio_vigencia, :data_fim_vigencia,
-        :municipio, :codigo_municipio
+        :id_obra_geoobras, :numero_contrato,
+        :valor_global, :valor_acumulado, :vigencia_fim, :situacao
     )
-    RETURNING id_contrato_geoobras
+    RETURNING id
 """)
 
 INSERT_OBRA_CONTRATO = text("""
-    INSERT INTO clean.obras_contratos (id_obra_geoobras, id_contrato_geoobras, tipo_relacao)
-    VALUES (:id_obra, :id_contrato, :tipo_relacao)
+    INSERT INTO clean.obras_contratos (id_obra, id_contrato)
+    VALUES (:id_obra, :id_contrato)
     ON CONFLICT DO NOTHING
 """)
 
 
 def insert_contrato_clean(
     session: Session,
-    id_projeto: str,
+    id_obra_geoobras: str,
     contrato: dict[str, Any],
-    municipio: str = "Macaé",
-) -> int:
+) -> str:
     result = session.execute(
         INSERT_CONTRATO_CLEAN,
         {
-            "id_contrato_obrasgov": contrato.get("numero_contrato"),
+            "id_obra_geoobras": str(id_obra_geoobras),
             "numero_contrato": contrato.get("numero_contrato"),
-            "objeto": contrato.get("objeto"),
-            "valor_contratado": contrato.get("valor_global"),
-            "valor_total_atualizado": contrato.get("valor_acumulado"),
-            "data_inicio_vigencia": contrato.get("vigencia_inicio"),
-            "data_fim_vigencia": contrato.get("vigencia_fim"),
-            "municipio": municipio,
-            "codigo_municipio": 3302403,  # IBGE Macaé
+            "valor_global": contrato.get("valor_global"),
+            "valor_acumulado": contrato.get("valor_acumulado"),
+            "vigencia_fim": contrato.get("vigencia_fim") or None,
+            "situacao": contrato.get("situacao"),
         },
     )
     return result.scalar()  # type: ignore[return-value]
@@ -214,15 +206,13 @@ def insert_contrato_clean(
 def link_obra_contrato(
     session: Session,
     id_obra: UUID | str,
-    id_contrato: int,
-    tipo: str = "principal",
+    id_contrato: str,
 ) -> None:
     session.execute(
         INSERT_OBRA_CONTRATO,
         {
             "id_obra": str(id_obra),
-            "id_contrato": id_contrato,
-            "tipo_relacao": tipo,
+            "id_contrato": str(id_contrato),
         },
     )
 
@@ -233,13 +223,11 @@ def link_obra_contrato(
 
 INSERT_CONVENIO_CLEAN = text("""
     INSERT INTO clean.convenios (
-        id_convenio_raw, numero_instrumento, unidade_gestora, aditivo,
-        tipo_instrumento, instituicao,
-        valor_concedente, valor_convenente, valor_total, municipio
+        numero_convenio, objeto, valor_repasse, valor_contrapartida,
+        data_inicio, data_fim, situacao
     ) VALUES (
-        :id_raw, :numero_instrumento, :unidade_gestora, :aditivo,
-        :tipo_instrumento, :instituicao,
-        :valor_concedente, :valor_convenente, :valor_total, :municipio
+        :numero_convenio, :objeto, :valor_repasse, :valor_contrapartida,
+        :data_inicio, :data_fim, :situacao
     )
     ON CONFLICT DO NOTHING
 """)
@@ -249,15 +237,12 @@ def insert_convenio_clean(session: Session, row: dict[str, Any]) -> None:
     session.execute(
         INSERT_CONVENIO_CLEAN,
         {
-            "id_raw": row.get("id_convenio"),
-            "numero_instrumento": row.get("numero_instrumento"),
-            "unidade_gestora": row.get("unidade_gestora"),
-            "aditivo": row.get("aditivo"),
-            "tipo_instrumento": row.get("tipo_instrumento"),
-            "instituicao": row.get("instituicao"),
-            "valor_concedente": row.get("valor_concedente"),
-            "valor_convenente": row.get("valor_convenente"),
-            "valor_total": row.get("valor_total"),
-            "municipio": "Macaé",
+            "numero_convenio": row.get("numero_convenio"),
+            "objeto": row.get("objeto"),
+            "valor_repasse": row.get("valor_repasse"),
+            "valor_contrapartida": row.get("valor_contrapartida"),
+            "data_inicio": row.get("data_inicio") or None,
+            "data_fim": row.get("data_fim") or None,
+            "situacao": row.get("situacao"),
         },
     )

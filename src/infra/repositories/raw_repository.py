@@ -98,30 +98,27 @@ def _bool_sim_nao(v: Any) -> bool | None:
 
 UPSERT_PROJETO = text("""
     INSERT INTO raw.obrasgov_projetos (
-        id_unico, nome, cep, endereco, descricao, funcao_social, meta_global,
-        data_inicial_prevista, data_final_prevista,
-        data_inicial_efetiva, data_final_efetiva,
-        data_cadastro, especie, natureza, situacao, uf,
-        qtd_empregos_gerados, populacao_beneficiada,
-        observacoes_pertinentes, is_modelada_por_bim,
-        tomadores, executores, repassadores, eixos,
+        id_unico, nome, situacao,
+        data_inicial_prevista, data_inicial_efetiva,
+        data_final_prevista, data_final_efetiva,
+        descricao, endereco, uf,
+        populacao_beneficiada, qtd_empregos_gerados,
         tipos, sub_tipos, fontes_de_recurso, payload_json
     ) VALUES (
-        :id_unico, :nome, :cep, :endereco, :descricao, :funcao_social, :meta_global,
-        :data_inicial_prevista, :data_final_prevista,
-        :data_inicial_efetiva, :data_final_efetiva,
-        :data_cadastro, :especie, :natureza, :situacao, :uf,
-        :qtd_empregos_gerados, :populacao_beneficiada,
-        :observacoes_pertinentes, :is_modelada_por_bim,
-        CAST(:tomadores AS jsonb), CAST(:executores AS jsonb), CAST(:repassadores AS jsonb), CAST(:eixos AS jsonb),
-        CAST(:tipos AS jsonb), CAST(:sub_tipos AS jsonb), CAST(:fontes_de_recurso AS jsonb), CAST(:payload_json AS jsonb)
+        :id_unico, :nome, :situacao,
+        :data_inicial_prevista, :data_inicial_efetiva,
+        :data_final_prevista, :data_final_efetiva,
+        :descricao, :endereco, :uf,
+        :populacao_beneficiada, :qtd_empregos_gerados,
+        CAST(:tipos AS jsonb), CAST(:sub_tipos AS jsonb),
+        CAST(:fontes_de_recurso AS jsonb), CAST(:payload_json AS jsonb)
     )
     ON CONFLICT (id_unico) DO UPDATE SET
         nome = EXCLUDED.nome,
         situacao = EXCLUDED.situacao,
         data_final_efetiva = EXCLUDED.data_final_efetiva,
-        qtd_empregos_gerados = EXCLUDED.qtd_empregos_gerados,
         populacao_beneficiada = EXCLUDED.populacao_beneficiada,
+        qtd_empregos_gerados = EXCLUDED.qtd_empregos_gerados,
         payload_json = EXCLUDED.payload_json,
         ingestado_em = NOW()
 """)
@@ -133,28 +130,16 @@ def upsert_projeto(session: Session, row: dict[str, Any]) -> None:
         {
             "id_unico": row.get("idUnico"),
             "nome": row.get("nome"),
-            "cep": row.get("cep"),
-            "endereco": row.get("endereco"),
-            "descricao": row.get("descricao"),
-            "funcao_social": row.get("funcaoSocial"),
-            "meta_global": row.get("metaGlobal"),
-            "data_inicial_prevista": row.get("dataInicialPrevista"),
-            "data_final_prevista": row.get("dataFinalPrevista"),
-            "data_inicial_efetiva": row.get("dataInicialEfetiva"),
-            "data_final_efetiva": row.get("dataFinalEfetiva"),
-            "data_cadastro": row.get("dataCadastro"),
-            "especie": row.get("especie"),
-            "natureza": row.get("natureza"),
             "situacao": row.get("situacao"),
+            "data_inicial_prevista": row.get("dataInicialPrevista"),
+            "data_inicial_efetiva": row.get("dataInicialEfetiva"),
+            "data_final_prevista": row.get("dataFinalPrevista"),
+            "data_final_efetiva": row.get("dataFinalEfetiva"),
+            "descricao": row.get("descricao"),
+            "endereco": row.get("endereco"),
             "uf": row.get("uf"),
-            "qtd_empregos_gerados": _int(row.get("qdtEmpregosGerados")),
             "populacao_beneficiada": _int(row.get("populacaoBeneficiada")),
-            "observacoes_pertinentes": row.get("observacoesPertinentes"),
-            "is_modelada_por_bim": row.get("isModeladaPorBim"),
-            "tomadores": _jsonb(row.get("tomadores")),
-            "executores": _jsonb(row.get("executores")),
-            "repassadores": _jsonb(row.get("repassadores")),
-            "eixos": _jsonb(row.get("eixos")),
+            "qtd_empregos_gerados": _int(row.get("qdtEmpregosGerados")),
             "tipos": _jsonb(row.get("tipos")),
             "sub_tipos": _jsonb(row.get("subTipos")),
             "fontes_de_recurso": _jsonb(row.get("fontesDeRecurso")),
@@ -167,21 +152,12 @@ def upsert_projeto(session: Session, row: dict[str, Any]) -> None:
 # ObrasGov – Execução Física
 # ---------------------------------------------------------------------------
 
-UPSERT_EF = text("""
+INSERT_EF = text("""
     INSERT INTO raw.obrasgov_execucao_fisica (
-        id_unico, data_situacao, percentual, situacao, observacoes,
-        em_operacao, justificativa_em_operacao,
-        cancelamentos_paralisacoes, documentos, payload_json
+        id_unico, data_situacao, percentual, situacao, observacoes
     ) VALUES (
-        :id_unico, :data_situacao, :percentual, :situacao, :observacoes,
-        :em_operacao, :justificativa_em_operacao,
-        CAST(:cancelamentos_paralisacoes AS jsonb), CAST(:documentos AS jsonb), CAST(:payload_json AS jsonb)
+        :id_unico, :data_situacao, :percentual, :situacao, :observacoes
     )
-    ON CONFLICT (id_unico, data_situacao) DO UPDATE SET
-        percentual = EXCLUDED.percentual,
-        situacao   = EXCLUDED.situacao,
-        payload_json = EXCLUDED.payload_json,
-        ingestado_em = NOW()
 """)
 
 
@@ -191,18 +167,13 @@ def upsert_execucao_fisica(session: Session, id_unico: str, row: dict[str, Any])
         logger.warning("execucao_fisica sem data_situacao para %s – ignorado", id_unico)
         return
     session.execute(
-        UPSERT_EF,
+        INSERT_EF,
         {
             "id_unico": id_unico,
             "data_situacao": data_sit,
             "percentual": row.get("percentual"),
             "situacao": row.get("situacao"),
             "observacoes": row.get("observacoes"),
-            "em_operacao": row.get("emOperacao"),
-            "justificativa_em_operacao": row.get("justificativaEmOperacao"),
-            "cancelamentos_paralisacoes": _jsonb(row.get("cancelamentosParalisacoes")),
-            "documentos": _jsonb(row.get("documentos")),
-            "payload_json": _jsonb(row),
         },
     )
 
@@ -211,43 +182,21 @@ def upsert_execucao_fisica(session: Session, id_unico: str, row: dict[str, Any])
 # ObrasGov – Execução Financeira (empenhos)
 # ---------------------------------------------------------------------------
 
-UPSERT_FINANCEIRA = text("""
+INSERT_FINANCEIRA = text("""
     INSERT INTO raw.obrasgov_execucao_financeira (
-        id_projeto_investimento, nr_nota_empenho,
-        nome_esfera_orcamentaria, nome_tipo_empenho,
-        fonte_recurso, natureza_despesa, numero_processo,
-        descricao_empenho, valor_empenho, payload_json
+        id_projeto_investimento, valor_empenho
     ) VALUES (
-        :id_projeto, :nr_nota,
-        :nome_esfera, :nome_tipo,
-        :fonte_recurso, :natureza_despesa, :numero_processo,
-        :descricao_empenho, :valor_empenho, CAST(:payload_json AS jsonb)
+        :id_projeto, :valor_empenho
     )
-    ON CONFLICT (id_projeto_investimento, nr_nota_empenho) DO UPDATE SET
-        valor_empenho = EXCLUDED.valor_empenho,
-        payload_json  = EXCLUDED.payload_json,
-        ingestado_em  = NOW()
 """)
 
 
 def upsert_execucao_financeira(session: Session, id_projeto: str, row: dict[str, Any]) -> None:
-    nr = row.get("nrNotaEmpenho") or row.get("nr_nota_empenho")
-    if not nr:
-        logger.warning("execucao_financeira sem nrNotaEmpenho para %s – ignorado", id_projeto)
-        return
     session.execute(
-        UPSERT_FINANCEIRA,
+        INSERT_FINANCEIRA,
         {
             "id_projeto": id_projeto,
-            "nr_nota": nr,
-            "nome_esfera": row.get("nomeEsferaOrcamentaria"),
-            "nome_tipo": row.get("nomeTipoEmpenho"),
-            "fonte_recurso": row.get("fonteRecurso"),
-            "natureza_despesa": row.get("naturezaDespesa"),
-            "numero_processo": row.get("numeroProcesso"),
-            "descricao_empenho": row.get("descricaoEmpenho"),
             "valor_empenho": row.get("valorEmpenho"),
-            "payload_json": _jsonb(row),
         },
     )
 
@@ -256,22 +205,14 @@ def upsert_execucao_financeira(session: Session, id_projeto: str, row: dict[str,
 # ObrasGov – Contratos
 # ---------------------------------------------------------------------------
 
-UPSERT_CONTRATO = text("""
+INSERT_CONTRATO = text("""
     INSERT INTO raw.obrasgov_contratos (
         id_projeto_investimento, numero_contrato,
-        vigencia_inicio, vigencia_fim, data_assinatura, data_publicacao,
-        objeto, processo, valor_global, valor_acumulado, payload_json
+        valor_global, valor_acumulado, vigencia_fim, situacao, payload_json
     ) VALUES (
         :id_projeto, :numero_contrato,
-        :vigencia_inicio, :vigencia_fim, :data_assinatura, :data_publicacao,
-        :objeto, :processo, :valor_global, :valor_acumulado, CAST(:payload_json AS jsonb)
+        :valor_global, :valor_acumulado, :vigencia_fim, :situacao, CAST(:payload_json AS jsonb)
     )
-    ON CONFLICT (id_projeto_investimento, numero_contrato) DO UPDATE SET
-        valor_global     = EXCLUDED.valor_global,
-        valor_acumulado  = EXCLUDED.valor_acumulado,
-        vigencia_fim     = EXCLUDED.vigencia_fim,
-        payload_json     = EXCLUDED.payload_json,
-        ingestado_em     = NOW()
 """)
 
 
@@ -281,18 +222,14 @@ def upsert_contrato(session: Session, id_projeto: str, row: dict[str, Any]) -> N
         logger.warning("contrato sem numeroContrato para %s – ignorado", id_projeto)
         return
     session.execute(
-        UPSERT_CONTRATO,
+        INSERT_CONTRATO,
         {
             "id_projeto": id_projeto,
             "numero_contrato": numero,
-            "vigencia_inicio": row.get("vigenciaInicio"),
-            "vigencia_fim": row.get("vigenciaFim"),
-            "data_assinatura": row.get("dataAssinatura"),
-            "data_publicacao": row.get("dataPublicacao"),
-            "objeto": row.get("objeto"),
-            "processo": row.get("processo"),
             "valor_global": row.get("valorGlobal"),
             "valor_acumulado": row.get("valorAcumulado"),
+            "vigencia_fim": row.get("vigenciaFim"),
+            "situacao": row.get("situacao"),
             "payload_json": _jsonb(row),
         },
     )
@@ -333,38 +270,23 @@ def insert_geometria(session: Session, id_unico: str, row: dict[str, Any]) -> No
 
 INSERT_TCERJ_OBRA = text("""
     INSERT INTO raw.tcerj_obras (
-        objeto, empresa, data_inicio, previsao_conclusao, etapas,
-        percentual_concluido, situacao, contratados, praticados,
-        registros_atualizados_ate, motivo_paralisacao, obra_paralisada,
-        payload_json
+        nome, situacao, percentual_concluido, data_inicio, data_fim_prevista
     ) VALUES (
-        :objeto, :empresa, :data_inicio, :previsao_conclusao, :etapas,
-        :percentual_concluido, :situacao, :contratados, :praticados,
-        :registros_atualizados_ate, :motivo_paralisacao, :obra_paralisada,
-        CAST(:payload_json AS jsonb)
+        :nome, :situacao, :percentual_concluido, :data_inicio, :data_fim_prevista
     )
     RETURNING id
 """)
 
 
 def insert_tcerj_obra(session: Session, row: dict[str, Any]) -> int:
-    # Contratados/Praticados são URLs para xlsx (não valores numéricos) → armazena None
     result = session.execute(
         INSERT_TCERJ_OBRA,
         {
-            "objeto": row.get("Objeto"),
-            "empresa": row.get("Empresa"),
-            "data_inicio": _ts_ms_to_date(row.get("DataInicio")),
-            "previsao_conclusao": _date_br(row.get("PrevisaoConclusao")),
-            "etapas": row.get("Etapas"),
-            "percentual_concluido": _pct(row.get("PercentualConcluido")),
+            "nome": row.get("Objeto"),
             "situacao": row.get("Situacao"),
-            "contratados": None,  # API retorna URL para xlsx, não valor monetário
-            "praticados": None,  # idem
-            "registros_atualizados_ate": _ts_ms_to_date(row.get("RegistrosAtualizadosAte")),
-            "motivo_paralisacao": row.get("MotivoParalisacao"),
-            "obra_paralisada": _bool_sim_nao(row.get("ObraParalisada")),
-            "payload_json": _jsonb(row),
+            "percentual_concluido": _pct(row.get("PercentualConcluido")),
+            "data_inicio": _ts_ms_to_date(row.get("DataInicio")),
+            "data_fim_prevista": _date_br(row.get("PrevisaoConclusao")),
         },
     )
     return result.scalar()  # type: ignore[return-value]
@@ -376,17 +298,11 @@ def insert_tcerj_obra(session: Session, row: dict[str, Any]) -> int:
 
 INSERT_TCERJ_PARALISADA = text("""
     INSERT INTO raw.tcerj_obras_paralisadas (
-        ano_paralisacao, data_paralisacao, tipo_ente, ente, nome,
-        funcao_governo, numero_contrato, cnpj_contratada, nome_contratada,
-        valor_total_contrato, valor_pago_obra, tempo_paralisacao,
-        motivo_paralisacao, data_inicio_obra, status_contrato,
-        classificacao_obra, fonte_principal_recursos, payload_json
+        nome, valor_total_contrato, valor_pago_obra,
+        motivo_paralisacao, ente, ano_referencia
     ) VALUES (
-        :ano_paralisacao, :data_paralisacao, :tipo_ente, :ente, :nome,
-        :funcao_governo, :numero_contrato, :cnpj_contratada, :nome_contratada,
-        :valor_total_contrato, :valor_pago_obra, :tempo_paralisacao,
-        :motivo_paralisacao, :data_inicio_obra, :status_contrato,
-        :classificacao_obra, :fonte_principal_recursos, CAST(:payload_json AS jsonb)
+        :nome, :valor_total_contrato, :valor_pago_obra,
+        :motivo_paralisacao, :ente, :ano_referencia
     )
 """)
 
@@ -395,24 +311,12 @@ def insert_tcerj_paralisada(session: Session, row: dict[str, Any]) -> None:
     session.execute(
         INSERT_TCERJ_PARALISADA,
         {
-            "ano_paralisacao": _int(row.get("AnoParalisacao")),
-            "data_paralisacao": _ts_ms_to_date(row.get("DataParalisacao")),
-            "tipo_ente": row.get("TipoEnte"),
-            "ente": row.get("Ente"),
             "nome": row.get("Nome"),
-            "funcao_governo": row.get("FuncaoGoverno"),
-            "numero_contrato": row.get("NumeroContrato"),
-            "cnpj_contratada": row.get("CNPJContratada"),
-            "nome_contratada": row.get("NomeContratada"),
             "valor_total_contrato": row.get("ValorTotalContrato"),
             "valor_pago_obra": row.get("ValorPagoObra"),
-            "tempo_paralisacao": row.get("TempoParalizacao"),
             "motivo_paralisacao": row.get("MotivoParalisacao"),
-            "data_inicio_obra": _ts_ms_to_date(row.get("DataInicioObra")),
-            "status_contrato": row.get("StatusContrato"),
-            "classificacao_obra": row.get("ClassificacaoObra"),
-            "fonte_principal_recursos": row.get("FontePrincipalRecursos"),
-            "payload_json": _jsonb(row),
+            "ente": row.get("Ente"),
+            "ano_referencia": _int(row.get("AnoParalisacao")),
         },
     )
 
@@ -423,13 +327,9 @@ def insert_tcerj_paralisada(session: Session, row: dict[str, Any]) -> None:
 
 INSERT_CONVENIO = text("""
     INSERT INTO raw.macae_convenios (
-        numero_instrumento, unidade_gestora, aditivo, tipo_instrumento,
-        instituicao, valor_concedente, valor_convenente, valor_total,
-        arquivo_origem, linha_origem, payload_json
+        numero_convenio, valor_repasse, valor_contrapartida
     ) VALUES (
-        :numero_instrumento, :unidade_gestora, :aditivo, :tipo_instrumento,
-        :instituicao, :valor_concedente, :valor_convenente, :valor_total,
-        :arquivo_origem, :linha_origem, CAST(:payload_json AS jsonb)
+        :numero_convenio, :valor_repasse, :valor_contrapartida
     )
 """)
 
@@ -446,16 +346,8 @@ def insert_convenio(session: Session, row: dict[str, Any], arquivo: str, linha: 
     session.execute(
         INSERT_CONVENIO,
         {
-            "numero_instrumento": row.get("Nº Instrumento"),
-            "unidade_gestora": row.get("Unidade Gestora"),
-            "aditivo": row.get("Aditivo"),
-            "tipo_instrumento": row.get("Tipo de Instrumento"),
-            "instituicao": row.get("Instituição"),
-            "valor_concedente": _money(row.get("Valor Concedente")),
-            "valor_convenente": _money(row.get("Valor Convenente")),
-            "valor_total": _money(row.get("Valor Total")),
-            "arquivo_origem": arquivo,
-            "linha_origem": linha,
-            "payload_json": _jsonb(row),
+            "numero_convenio": row.get("Nº Instrumento"),
+            "valor_repasse": _money(row.get("Valor Concedente")),
+            "valor_contrapartida": _money(row.get("Valor Convenente")),
         },
     )

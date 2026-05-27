@@ -305,20 +305,20 @@ def _build_obra_from_obrasgov(
 
 def _build_obra_from_tcerj(row: dict) -> dict:
     data_inicio = _parse_date(row.get("data_inicio"))
-    data_fim_prevista = _parse_date(row.get("previsao_conclusao"))
+    data_fim_prevista = _parse_date(row.get("data_fim_prevista"))
 
     return {
         "id_obra_geoobras": str(uuid.uuid4()),
         "id_unico_obrasgov": None,
         "id_obras_tce": row.get("id"),
-        "nome": row.get("objeto") or "Sem nome (TCE)",
+        "nome": row.get("nome") or "Sem nome (TCE)",
         "descricao": None,
         "municipio": MUNICIPIO_ALVO.title(),
         "uf": "RJ",
         "codigo_municipio": COD_MUNICIPIO_MACAE,
         "bairro": None,
         "logradouro": None,
-        "status_obra": _map_status_tcerj(row.get("situacao"), bool(row.get("obra_paralisada"))),
+        "status_obra": _map_status_tcerj(row.get("situacao"), False),
         "data_inicio": data_inicio,
         "data_fim_prevista": data_fim_prevista,
         "data_fim_real": None,
@@ -328,8 +328,8 @@ def _build_obra_from_tcerj(row: dict) -> dict:
         "flag_populacao_suspeita": False,
         "empregos_gerados": None,
         "flag_empregos_suspeitos": False,
-        "valor_total_contratado": row.get("contratados"),
-        "valor_pago_acumulado": row.get("praticados"),
+        "valor_total_contratado": row.get("valor_contratado"),
+        "valor_pago_acumulado": row.get("valor_pago"),
         "valor_previsto_original": None,
         "latitude": None,
         "longitude": None,
@@ -341,21 +341,19 @@ def _build_obra_from_tcerj(row: dict) -> dict:
 
 def _build_obra_from_tcerj_paralisada(row: dict) -> dict:
     """Normaliza uma obra paralisada do TCE-RJ (raw.tcerj_obras_paralisadas)."""
-    data_inicio = _parse_date(row.get("data_inicio_obra"))
-
     return {
         "id_obra_geoobras": str(uuid.uuid4()),
         "id_unico_obrasgov": None,
         "id_obras_tce": row.get("id"),
         "nome": row.get("nome") or "Sem nome (TCE paralisada)",
-        "descricao": row.get("funcao_governo"),
+        "descricao": None,
         "municipio": (row.get("ente") or MUNICIPIO_ALVO).strip().title(),
         "uf": "RJ",
         "codigo_municipio": COD_MUNICIPIO_MACAE,
         "bairro": None,
         "logradouro": None,
         "status_obra": StatusObra.PARALISADA.value,
-        "data_inicio": data_inicio,
+        "data_inicio": None,
         "data_fim_prevista": None,
         "data_fim_real": None,
         "flag_data_fim_pendente": True,
@@ -371,7 +369,7 @@ def _build_obra_from_tcerj_paralisada(row: dict) -> dict:
         "longitude": None,
         "geom": None,
         "fonte_principal": FontePrincipal.TCE.value,
-        "_numero_contrato": _normalize_contract_num(row.get("numero_contrato")),
+        "_numero_contrato": None,
         "_contratos_raw": [],
     }
 
@@ -641,7 +639,7 @@ def run_clean() -> dict:
 
             for cont in contratos_raw:
                 try:
-                    id_cont = clean_repo.insert_contrato_clean(session, obra.get("id_unico_obrasgov", ""), cont)
+                    id_cont = clean_repo.insert_contrato_clean(session, obra["id_obra_geoobras"], cont)
                     clean_repo.link_obra_contrato(session, obra["id_obra_geoobras"], id_cont)
                     counters["contratos"] += 1
                 except Exception as exc:
