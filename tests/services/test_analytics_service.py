@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
-from src.services.analytics_service import _calc_aditivo, _calc_probabilidade_atraso
+from src.services.analytics_service import _calc_aditivo, _calc_insolvencia, _calc_probabilidade_atraso
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +168,75 @@ def test_aditivo_guard_returns_none_none(original: float | None, current: float 
     pct, flag = _calc_aditivo(original, current)
     assert pct is None
     assert flag is None
+
+
+# ---------------------------------------------------------------------------
+# T-05: _calc_insolvencia — linear burn-rate insolvency projection
+# ---------------------------------------------------------------------------
+
+# 12 months ago expressed in days using the same 30.44-day month constant
+_12_MONTHS_AGO = date.today() - timedelta(days=round(12 * 30.44))
+
+
+def test_insolvencia_happy_path_flags_risk_and_approx_burn_rate() -> None:
+    """
+    Happy: 12 months elapsed, 60% spent, 20% physical, active obra.
+    burn_rate ≈ 5%/month, exhaustion before 100% physical → flag True.
+    """
+    result = _calc_insolvencia(
+        data_inicio=_12_MONTHS_AGO,
+        percentual_desembolso=60.0,
+        percentual_fisico=20.0,
+        status="em_execucao",
+    )
+
+    assert result["burn_rate_mensal_pct"] == pytest.approx(5.0, abs=0.1)
+    assert result["meses_para_exaustao"] is not None
+    assert result["pct_fisico_estimado_exaustao"] is not None
+    assert result["pct_fisico_estimado_exaustao"] < 100.0
+    assert result["flag_risco_insolvencia"] is True
+
+
+def test_insolvencia_data_inicio_none_returns_all_null() -> None:
+    """Edge 1: data_inicio None → all fields None, flag False, no exception."""
+    result = _calc_insolvencia(
+        data_inicio=None,
+        percentual_desembolso=60.0,
+        percentual_fisico=20.0,
+        status="em_execucao",
+    )
+
+    assert result["burn_rate_mensal_pct"] is None
+    assert result["meses_para_exaustao"] is None
+    assert result["pct_fisico_estimado_exaustao"] is None
+    assert result["flag_risco_insolvencia"] is False
+
+
+def test_insolvencia_zero_burn_rate_no_div_by_zero() -> None:
+    """Edge 2: percentual_desembolso 0 → burn_rate 0 → meses_para_exaustao None, flag False."""
+    result = _calc_insolvencia(
+        data_inicio=_12_MONTHS_AGO,
+        percentual_desembolso=0.0,
+        percentual_fisico=20.0,
+        status="em_execucao",
+    )
+
+    assert result["burn_rate_mensal_pct"] == 0.0
+    assert result["meses_para_exaustao"] is None
+    assert result["pct_fisico_estimado_exaustao"] is None
+    assert result["flag_risco_insolvencia"] is False
+
+
+def test_insolvencia_concluida_flag_false_regardless_of_projection() -> None:
+    """Edge 3: status 'concluida' → flag False even when projection would otherwise flag risk."""
+    result = _calc_insolvencia(
+        data_inicio=_12_MONTHS_AGO,
+        percentual_desembolso=60.0,
+        percentual_fisico=20.0,
+        status="concluida",
+    )
+
+    assert result["flag_risco_insolvencia"] is False
+    # projection values are still computed
+    assert result["burn_rate_mensal_pct"] is not None
+    assert result["meses_para_exaustao"] is not None

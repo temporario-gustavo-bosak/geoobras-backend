@@ -52,6 +52,68 @@ def _calc_aditivo(
     return pct, flag
 
 
+def _calc_insolvencia(
+    data_inicio: date | None,
+    percentual_desembolso: float | None,
+    percentual_fisico: float | None,
+    status: str | None,
+) -> dict:
+    """
+    Linear average-rate projection of financial exhaustion (ritmo médio).
+
+    NOTE: execucao_financeira empenhos lack per-event dates, so there is no
+    disbursement time-series available. This is a single-snapshot projection —
+    not a time-series forecast — that assumes the average monthly spend rate
+    observed since data_inicio will continue unchanged until budget exhaustion.
+
+    Returns a dict with keys:
+        burn_rate_mensal_pct, meses_para_exaustao,
+        pct_fisico_estimado_exaustao, flag_risco_insolvencia.
+    Never raises; missing/invalid inputs yield None fields and flag=False.
+    """
+    _null: dict = {
+        "burn_rate_mensal_pct": None,
+        "meses_para_exaustao": None,
+        "pct_fisico_estimado_exaustao": None,
+        "flag_risco_insolvencia": False,
+    }
+
+    if data_inicio is None or percentual_desembolso is None or percentual_fisico is None:
+        return _null
+
+    elapsed_months = (date.today() - data_inicio).days / 30.44
+    if elapsed_months <= 0:
+        return _null
+
+    burn_rate_mensal_pct = round(percentual_desembolso / elapsed_months, 2)
+    fisico_rate_mensal = percentual_fisico / elapsed_months
+    pct_restante = 100.0 - percentual_desembolso
+
+    if burn_rate_mensal_pct <= 0:
+        return {
+            "burn_rate_mensal_pct": burn_rate_mensal_pct,
+            "meses_para_exaustao": None,
+            "pct_fisico_estimado_exaustao": None,
+            "flag_risco_insolvencia": False,
+        }
+
+    meses_para_exaustao = round(pct_restante / burn_rate_mensal_pct, 1)
+    pct_fisico_estimado_exaustao = round(
+        min(100.0, percentual_fisico + fisico_rate_mensal * meses_para_exaustao), 2
+    )
+    flag_risco_insolvencia = (
+        status not in ("concluida", "cancelada")
+        and pct_fisico_estimado_exaustao < 100
+    )
+
+    return {
+        "burn_rate_mensal_pct": burn_rate_mensal_pct,
+        "meses_para_exaustao": meses_para_exaustao,
+        "pct_fisico_estimado_exaustao": pct_fisico_estimado_exaustao,
+        "flag_risco_insolvencia": flag_risco_insolvencia,
+    }
+
+
 def _calc_dias_atraso(
     data_fim_prevista: date | None,
     data_fim_real: date | None,
@@ -262,15 +324,22 @@ def run_analytics() -> dict:
             obra.get("valor_previsto_original"),
             obra.get("valor_total_contratado"),
         )
+        pct_desembolso = _calc_pct_desembolso(
+            obra.get("valor_total_contratado"),
+            obra.get("valor_pago_acumulado"),
+        )
+        insolvencia = _calc_insolvencia(
+            obra.get("data_inicio"),
+            pct_desembolso,
+            obra.get("percentual_fisico"),
+            obra.get("status_obra"),
+        )
         metricas.append(
             {
                 "id_obra_geoobras": id_obra,
                 "valor_total_contratado": obra.get("valor_total_contratado"),
                 "valor_pago_acumulado": obra.get("valor_pago_acumulado"),
-                "percentual_desembolso": _calc_pct_desembolso(
-                    obra.get("valor_total_contratado"),
-                    obra.get("valor_pago_acumulado"),
-                ),
+                "percentual_desembolso": pct_desembolso,
                 "percentual_fisico": obra.get("percentual_fisico"),
                 "data_inicio": obra.get("data_inicio"),
                 "data_fim_prevista": obra.get("data_fim_prevista"),
@@ -279,6 +348,10 @@ def run_analytics() -> dict:
                 "flag_possivel_atraso": flag_atraso,
                 "pct_aditivo": pct_aditivo,
                 "flag_alerta_aditivo": flag_alerta_aditivo,
+                "burn_rate_mensal_pct": insolvencia["burn_rate_mensal_pct"],
+                "meses_para_exaustao": insolvencia["meses_para_exaustao"],
+                "pct_fisico_estimado_exaustao": insolvencia["pct_fisico_estimado_exaustao"],
+                "flag_risco_insolvencia": insolvencia["flag_risco_insolvencia"],
             }
         )
 
