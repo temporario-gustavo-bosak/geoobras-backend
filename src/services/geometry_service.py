@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def _try_shapely(wkt: str) -> tuple[float | None, float | None]:
-    """Tenta usar Shapely para extrair centroide de qualquer geometry WKT."""
+    """Tenta WKT primeiro; se falhar, tenta WKB hex (fallback para APIs que retornam geometrias em hex)."""
     try:
         from shapely import wkt as shapely_wkt
 
@@ -24,7 +24,16 @@ def _try_shapely(wkt: str) -> tuple[float | None, float | None]:
         centroid = geom.centroid
         return centroid.y, centroid.x  # lat = y, lon = x
     except Exception as exc:
-        logger.debug("Shapely falhou ao parsear WKT: %s", exc)
+        logger.debug("Shapely WKT falhou: %s — tentando WKB hex", exc)
+
+    try:
+        from shapely import wkb as shapely_wkb
+
+        geom = shapely_wkb.loads(wkt, hex=True)
+        centroid = geom.centroid
+        return centroid.y, centroid.x
+    except Exception as exc:
+        logger.debug("Shapely WKB hex também falhou: %s", exc)
         return None, None
 
 
