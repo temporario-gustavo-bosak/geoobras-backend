@@ -152,35 +152,41 @@ def _calc_iec(
     probabilidade_atraso: float | None,
     pct_aditivo: float | None,
     flag_risco_insolvencia: bool,
+    recorrencia_count: int = 0,
 ) -> float | None:
     """
     Computes the Índice de Eficiência Composta (IEC) on a 0–100 scale.
 
-    IEC = max(0, round(100 - total_penalty, 1))
+    IEC = max(0, round(100 - actual_penalty, 1))
+    actual_penalty = total_penalty × (100 / max_possible)
 
-    Penalty components (max 100 pts total):
+    Penalty components:
       risco_sobrecusto     → risco_sobrecusto (0..1) × 35             (max 35 pts)
       probabilidade_atraso → probabilidade_atraso (0..1) × 30         (max 30 pts)
       conformidade_aditivo → min(max(pct_aditivo, 0) / 25, 1.0) × 25 (max 25 pts)
       insolvencia          → 10.0 if flag_risco_insolvencia else 0     (max 10 pts)
+      recorrencia          → count==1 → 5 pts; count>=2 → 10 pts      (max 10 pts)
+
+    max_possible:
+      100 when recorrencia_count == 0 (identity rescaling).
+      110 when recorrencia_count > 0  (rescale: × 100/110).
 
     Rules:
     - None inputs are skipped (no penalty for missing data).
     - flag_risco_insolvencia=False contributes 0 penalty (not absent).
-    - Returns None when ALL inputs carry no signal (all None / flag False).
-    - The penalty components already sum to 100 at worst-case, so rescaling
-      is the identity (×100/100); the max(0, ...) clamp handles floating-point
-      edge cases.
+    - Returns None when ALL inputs carry no signal (all None / False / 0).
     """
     if (
         risco_sobrecusto is None
         and probabilidade_atraso is None
         and pct_aditivo is None
         and not flag_risco_insolvencia
+        and recorrencia_count == 0
     ):
         return None
 
     total_penalty = 0.0
+    max_possible = 100.0
 
     if risco_sobrecusto is not None:
         total_penalty += risco_sobrecusto * 35
@@ -194,7 +200,59 @@ def _calc_iec(
     if flag_risco_insolvencia:
         total_penalty += 10.0
 
-    return max(0.0, round(100.0 - total_penalty, 1))
+    if recorrencia_count >= 2:
+        total_penalty += 10.0
+        max_possible = 110.0
+    elif recorrencia_count == 1:
+        total_penalty += 5.0
+        max_possible = 110.0
+
+    actual_penalty = total_penalty * (100.0 / max_possible)
+    return max(0.0, round(100.0 - actual_penalty, 1))
+
+
+# ---------------------------------------------------------------------------
+# Territorial recurrence count (spatial, Euclidean approximation)
+# ---------------------------------------------------------------------------
+
+_RECORRENCIA_RADIUS_M: float = 50.0
+_DEGREES_PER_METRE: float = 1.0 / 111_000.0
+
+
+def _build_recorrencia_map(
+    obras: list[dict],
+    radius_m: float = _RECORRENCIA_RADIUS_M,
+) -> dict[str, int]:
+    """
+    For each obra with valid coords, count how many OTHER obras are within radius_m metres.
+    Returns {id_obra_geoobras: recorrencia_count}.
+    O(n²) — fine for hackathon scale.
+
+    Distance approximation: at Macaé's latitude (~22°S), 1 degree ≈ 111 km.
+    Convert radius_m to degrees: radius_deg = radius_m / 111_000.
+    Use Euclidean distance on (lat, lon) — accurate enough within a city.
+    """
+    radius_deg = radius_m * _DEGREES_PER_METRE
+    result: dict[str, int] = {}
+    com_coords: list[tuple[str, float, float]] = []
+
+    for obra in obras:
+        id_obra = str(obra["id_obra_geoobras"])
+        lat: float | None = obra.get("latitude")
+        lon: float | None = obra.get("longitude")
+        result[id_obra] = 0
+        if lat is not None and lon is not None:
+            com_coords.append((id_obra, lat, lon))
+
+    for i, (id_a, lat_a, lon_a) in enumerate(com_coords):
+        for id_b, lat_b, lon_b in com_coords[i + 1:]:
+            dlat = lat_a - lat_b
+            dlon = lon_a - lon_b
+            if (dlat * dlat + dlon * dlon) ** 0.5 <= radius_deg:
+                result[id_a] += 1
+                result[id_b] += 1
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +424,9 @@ def run_analytics() -> dict:
 
     logger.info("Analytics: processando %d obras…", len(obras))
 
+    # Pre-pass: spatial recurrence counts (feeds IEC and territorial upsert)
+    recorrencia_count_map = _build_recorrencia_map(obras)
+
     # Pass 1: compute per-obra metrics (needed as input to the population z-score)
     metricas: list[dict[str, Any]] = []
     for obra in obras:
@@ -421,6 +482,7 @@ def run_analytics() -> dict:
         for metrica, obra in zip(metricas, obras):
             id_obra = metrica["id_obra_geoobras"]
             prob = proba_map.get(id_obra)
+            recorrencia_count = recorrencia_count_map.get(str(id_obra), 0)
             metrica["probabilidade_atraso"] = prob
             metrica["metodo_score"] = "heuristica_zscore_v1" if prob is not None else None
             metrica["iec_score"] = _calc_iec(
@@ -428,6 +490,7 @@ def run_analytics() -> dict:
                 prob,
                 metrica.get("pct_aditivo"),
                 metrica.get("flag_risco_insolvencia", False),
+                recorrencia_count=recorrencia_count,
             )
 
             upsert_metrica(session, metrica)
@@ -439,7 +502,7 @@ def run_analytics() -> dict:
                 id_obra=id_obra,
                 bairro=rec.get("bairro"),
                 geom=obra.get("geom"),
-                qtd_proximas=rec.get("qtd_obras_proximas", 1),
+                qtd_proximas=recorrencia_count,
                 qtd_bairro=rec.get("qtd_bairro", 1),
                 flag_recorrencia=rec.get("flag_recorrencia", False),
                 raio_metros=rec.get("raio_metros", _RAIO_METROS),

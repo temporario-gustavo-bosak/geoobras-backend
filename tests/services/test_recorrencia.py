@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from src.services.analytics_service import _calc_recorrencia
+from src.services.analytics_service import _build_recorrencia_map, _calc_recorrencia
 
 # ---------------------------------------------------------------------------
 # Coordinate helpers
@@ -165,3 +165,52 @@ def test_same_bairro_within_window_counted() -> None:
     assert result["b3"]["qtd_bairro"] == 1  # different bairro
     assert result["b1"]["flag_recorrencia"] is True
     assert result["b3"]["flag_recorrencia"] is False
+
+
+# ---------------------------------------------------------------------------
+# T-04: _build_recorrencia_map — Euclidean spatial count
+# ---------------------------------------------------------------------------
+
+# Two coords ~30 m apart in latitude (0.00027° × 111 000 m/° ≈ 30 m)
+_LAT_NEAR_1 = -22.3700
+_LAT_NEAR_2 = -22.37027
+_LON_SHARED = -41.7800
+
+
+def _simple_obra(id_obra: str, lat: float | None, lon: float | None) -> dict:
+    return {"id_obra_geoobras": id_obra, "latitude": lat, "longitude": lon}
+
+
+def test_build_recorrencia_map_two_obras_within_30m_counted() -> None:
+    """Happy path: two obras ~30 m apart → both get recorrencia_count >= 1."""
+    obras = [
+        _simple_obra("a", _LAT_NEAR_1, _LON_SHARED),
+        _simple_obra("b", _LAT_NEAR_2, _LON_SHARED),
+    ]
+
+    result = _build_recorrencia_map(obras)
+
+    assert result["a"] >= 1
+    assert result["b"] >= 1
+
+
+def test_build_recorrencia_map_obra_without_coordinates_returns_zero() -> None:
+    """Happy path: obra without lat/lon → count = 0, no exception raised."""
+    obras = [
+        _simple_obra("no_coord", None, None),
+        _simple_obra("with_coord", _LAT_NEAR_1, _LON_SHARED),
+    ]
+
+    result = _build_recorrencia_map(obras)
+
+    assert result["no_coord"] == 0
+    assert "no_coord" in result
+
+
+def test_build_recorrencia_map_single_obra_returns_zero() -> None:
+    """Edge: single obra in dataset → no neighbours → count = 0."""
+    obras = [_simple_obra("only", _LAT_NEAR_1, _LON_SHARED)]
+
+    result = _build_recorrencia_map(obras)
+
+    assert result["only"] == 0
