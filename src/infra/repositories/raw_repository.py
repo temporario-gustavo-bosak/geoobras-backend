@@ -101,14 +101,14 @@ UPSERT_PROJETO = text("""
         id_unico, nome, situacao,
         data_inicial_prevista, data_inicial_efetiva,
         data_final_prevista, data_final_efetiva,
-        descricao, endereco, uf,
+        descricao, endereco, municipio, uf,
         populacao_beneficiada, qtd_empregos_gerados,
         tipos, sub_tipos, fontes_de_recurso, payload_json
     ) VALUES (
         :id_unico, :nome, :situacao,
         :data_inicial_prevista, :data_inicial_efetiva,
         :data_final_prevista, :data_final_efetiva,
-        :descricao, :endereco, :uf,
+        :descricao, :endereco, :municipio, :uf,
         :populacao_beneficiada, :qtd_empregos_gerados,
         CAST(:tipos AS jsonb), CAST(:sub_tipos AS jsonb),
         CAST(:fontes_de_recurso AS jsonb), CAST(:payload_json AS jsonb)
@@ -116,6 +116,7 @@ UPSERT_PROJETO = text("""
     ON CONFLICT (id_unico) DO UPDATE SET
         nome = EXCLUDED.nome,
         situacao = EXCLUDED.situacao,
+        municipio = EXCLUDED.municipio,
         data_final_efetiva = EXCLUDED.data_final_efetiva,
         populacao_beneficiada = EXCLUDED.populacao_beneficiada,
         qtd_empregos_gerados = EXCLUDED.qtd_empregos_gerados,
@@ -137,6 +138,7 @@ def upsert_projeto(session: Session, row: dict[str, Any]) -> None:
             "data_final_efetiva": row.get("dataFinalEfetiva"),
             "descricao": row.get("descricao"),
             "endereco": row.get("endereco"),
+            "municipio": row.get("municipio") or row.get("nomeMunicipio"),
             "uf": row.get("uf"),
             "populacao_beneficiada": _int(row.get("populacaoBeneficiada")),
             "qtd_empregos_gerados": _int(row.get("qdtEmpregosGerados")),

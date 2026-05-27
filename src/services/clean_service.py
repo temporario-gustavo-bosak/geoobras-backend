@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 _settings = get_settings()
 
 MUNICIPIO_ALVO = _settings.OBRASGOV_MUNICIPIO_ALVO.upper()
-# Versão sem acento para comparação com dados legados de governo (ex: "MACAE" em vez de "MACAÉ")
-_MUNICIPIO_ALVO_ASCII = unicodedata.normalize("NFD", MUNICIPIO_ALVO).encode("ascii", "ignore").decode()
+# Lowercase ASCII version: handles "Macaé", "MACAÉ", "Macae", "MACAE", "macaé", "macae" transparently
+_MUNICIPIO_ALVO_ASCII = unicodedata.normalize("NFD", MUNICIPIO_ALVO.lower()).encode("ascii", "ignore").decode()
 
 # Código IBGE de Macaé/RJ
 COD_MUNICIPIO_MACAE = 3302403
@@ -48,41 +48,59 @@ PENDENTE_MARKERS = {"informacao pendente", "informação pendente", "pendente", 
 def _is_macae(text_fields: list[str | None]) -> bool:
     """
     Verifica se algum dos campos de texto contém referência a Macaé.
-    Normaliza acentos antes de comparar para tratar variações como
-    "MACAE" (sem cedilha) vs "MACAÉ" — comum em sistemas legados de governo.
+    Normaliza para lowercase ASCII antes de comparar: trata variações
+    "Macaé", "MACAÉ", "Macae", "MACAE", "macaé", "macae" de forma idêntica.
     """
     for f in text_fields:
         if not f:
             continue
-        normalized = unicodedata.normalize("NFD", str(f).upper()).encode("ascii", "ignore").decode()
+        normalized = unicodedata.normalize("NFD", str(f).lower()).encode("ascii", "ignore").decode()
         if _MUNICIPIO_ALVO_ASCII in normalized:
             return True
     return False
 
 
+def _extract_items_municipios(items: Any, result: list[str]) -> None:
+    """Populates result with municipality names found inside a tomadores/executores list."""
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except Exception:
+            return
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for key in ("municipio", "nomeMunicipio", "municipioNome"):
+            m = item.get(key)
+            if m:
+                result.append(str(m))
+
+
 def _municipios_tomadores(row: dict) -> list[str]:
     """
     Extrai nomes de município do JSONB de tomadores/executores.
-    A tabela raw.obrasgov_projetos não tem coluna 'municipio' direta;
-    o município fica aninhado dentro do array tomadores da API.
+    Verifica tanto colunas diretas (esquema antigo) quanto payload_json
+    (esquema v2 — tomadores/executores ficam embutidos no payload completo).
     """
     result: list[str] = []
+
+    # Direct columns (legacy schema)
     for field in ("tomadores", "executores"):
-        items = row.get(field) or []
-        if isinstance(items, str):
-            try:
-                items = json.loads(items)
-            except Exception:
-                continue
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            for key in ("municipio", "nomeMunicipio", "municipioNome"):
-                m = item.get(key)
-                if m:
-                    result.append(str(m))
+        _extract_items_municipios(row.get(field) or [], result)
+
+    # Fallback: payload_json stores the full API response in the v2 schema
+    payload = row.get("payload_json") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if isinstance(payload, dict):
+        for field in ("tomadores", "executores"):
+            _extract_items_municipios(payload.get(field) or [], result)
+
     return result
 
 

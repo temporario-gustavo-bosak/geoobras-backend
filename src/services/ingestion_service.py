@@ -7,6 +7,7 @@ Cada método público corresponde a uma fonte de dados.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -32,9 +33,15 @@ def ingest_obrasgov() -> dict:
       1. Projetos (todo o RJ, filtro de Macaé fica na camada CLEAN)
       2. Execução física, financeira, contratos e geometria por projeto
 
-    Retorna: {"projetos": int, "execucao_fisica": int, "empenhos": int, "contratos": int, "geometrias": int}
+    Retorna contadores com ok/failed por tabela de detalhe.
     """
-    counters = {"projetos": 0, "execucao_fisica": 0, "empenhos": 0, "contratos": 0, "geometrias": 0}
+    counters: dict = {
+        "projetos": 0,
+        "exec_fisica_ok": 0, "exec_fisica_failed": 0,
+        "empenhos_ok": 0,    "empenhos_failed": 0,
+        "contratos_ok": 0,   "contratos_failed": 0,
+        "geometrias_ok": 0,  "geometrias_failed": 0,
+    }
 
     with ObrasGovClient() as client:
         # --- Projetos ---
@@ -57,45 +64,71 @@ def ingest_obrasgov() -> dict:
 
         logger.info("ObrasGov: %d projetos ingeridos. Iniciando detalhes…", counters["projetos"])
 
-        # --- Detalhes por projeto ---
-        for id_unico in all_ids:
+        # --- Detalhes por projeto: cada chamada isolada para que timeouts não ---
+        # --- abortem as demais chamadas da mesma obra.                          ---
+        for idx, id_unico in enumerate(all_ids, 1):
+            # Execução física
             try:
-                # Execução física
                 ef_list = client.get_execucao_fisica(id_unico)
                 if ef_list:
                     with get_session() as session:
                         for ef in ef_list:
                             raw_repo.upsert_execucao_fisica(session, id_unico, ef)
-                            counters["execucao_fisica"] += 1
+                            counters["exec_fisica_ok"] += 1
+            except Exception as exc:
+                logger.error("ObrasGov [%s] exec_fisica falhou: %s", id_unico, exc)
+                counters["exec_fisica_failed"] += 1
 
-                # Execução financeira (empenhos)
+            # Execução financeira (empenhos)
+            try:
                 fin_list = client.get_execucao_financeira(id_unico)
                 if fin_list:
                     with get_session() as session:
                         for fin in fin_list:
                             raw_repo.upsert_execucao_financeira(session, id_unico, fin)
-                            counters["empenhos"] += 1
+                            counters["empenhos_ok"] += 1
+            except Exception as exc:
+                logger.error("ObrasGov [%s] financeira falhou: %s", id_unico, exc)
+                counters["empenhos_failed"] += 1
 
-                # Contratos
+            # Contratos
+            try:
                 cont_list = client.get_contratos(id_unico)
                 if cont_list:
                     with get_session() as session:
                         for cont in cont_list:
                             raw_repo.upsert_contrato(session, id_unico, cont)
-                            counters["contratos"] += 1
+                            counters["contratos_ok"] += 1
+            except Exception as exc:
+                logger.error("ObrasGov [%s] contratos falhou: %s", id_unico, exc)
+                counters["contratos_failed"] += 1
 
-                # Geometria
+            # Geometria
+            try:
                 geo_list = client.get_geometria(id_unico)
                 if geo_list:
                     with get_session() as session:
                         for geo in geo_list:
                             raw_repo.insert_geometria(session, id_unico, geo)
-                            counters["geometrias"] += 1
-
+                            counters["geometrias_ok"] += 1
             except Exception as exc:
-                logger.error("ObrasGov: erro ao processar detalhes de %s: %s", id_unico, exc)
+                logger.error("ObrasGov [%s] geometria falhou: %s", id_unico, exc)
+                counters["geometrias_failed"] += 1
 
-    logger.info("ObrasGov ingestão concluída: %s", counters)
+            # Throttle: longer pause every 5 projects to avoid 429
+            if idx % 5 == 0:
+                time.sleep(10)
+            else:
+                time.sleep(1.5)
+
+    logger.info(
+        "RAW enrichment: %d projetos, exec_fisica=%d ok/%d failed, "
+        "contratos=%d ok/%d failed, geometria=%d ok/%d failed",
+        counters["projetos"],
+        counters["exec_fisica_ok"], counters["exec_fisica_failed"],
+        counters["contratos_ok"], counters["contratos_failed"],
+        counters["geometrias_ok"], counters["geometrias_failed"],
+    )
     return counters
 
 
