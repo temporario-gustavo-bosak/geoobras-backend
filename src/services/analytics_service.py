@@ -31,6 +31,27 @@ def _calc_pct_desembolso(valor_contratado: float | None, valor_pago: float | Non
     return None
 
 
+def _calc_aditivo(
+    valor_previsto_original: float | None,
+    valor_total_contratado: float | None,
+) -> tuple[float | None, str | None]:
+    """
+    Calcula percentual de aditivo e sinaliza conformidade com o teto legal
+    de 25% (Lei 14.133/2021 art. 125).
+    Retorna (pct_aditivo, flag_alerta_aditivo).
+    """
+    if valor_previsto_original is None or valor_previsto_original <= 0 or valor_total_contratado is None:
+        return None, None
+    pct = round((valor_total_contratado - valor_previsto_original) / valor_previsto_original * 100, 2)
+    if pct < 20:
+        flag = "verde"
+    elif pct <= 25:
+        flag = "amarelo"
+    else:
+        flag = "vermelho"
+    return pct, flag
+
+
 def _calc_dias_atraso(
     data_fim_prevista: date | None,
     data_fim_real: date | None,
@@ -237,6 +258,10 @@ def run_analytics() -> dict:
             obra.get("data_fim_real"),
             obra.get("status_obra"),
         )
+        pct_aditivo, flag_alerta_aditivo = _calc_aditivo(
+            obra.get("valor_previsto_original"),
+            obra.get("valor_total_contratado"),
+        )
         metricas.append(
             {
                 "id_obra_geoobras": id_obra,
@@ -252,6 +277,8 @@ def run_analytics() -> dict:
                 "data_fim_real": obra.get("data_fim_real"),
                 "dias_atraso": dias_atraso,
                 "flag_possivel_atraso": flag_atraso,
+                "pct_aditivo": pct_aditivo,
+                "flag_alerta_aditivo": flag_alerta_aditivo,
             }
         )
 

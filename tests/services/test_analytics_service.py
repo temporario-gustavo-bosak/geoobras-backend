@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from src.services.analytics_service import _calc_probabilidade_atraso
+from src.services.analytics_service import _calc_aditivo, _calc_probabilidade_atraso
 
 
 # ---------------------------------------------------------------------------
@@ -119,3 +119,52 @@ def test_obra_without_dates_gets_none_in_large_sample() -> None:
     assert result["ok1"] is not None
     assert result["ok2"] is not None
     assert result["ok3"] is not None
+
+
+# ---------------------------------------------------------------------------
+# T-04: _calc_aditivo — additive percentage and legal-ceiling flag
+# ---------------------------------------------------------------------------
+
+
+def test_aditivo_above_legal_ceiling_returns_vermelho() -> None:
+    """Happy: 30% additive (1_300_000 / 1_000_000) exceeds the 25% ceiling → 'vermelho'."""
+    pct, flag = _calc_aditivo(1_000_000.0, 1_300_000.0)
+    assert pct == 30.0
+    assert flag == "vermelho"
+
+
+def test_aditivo_at_boundary_returns_amarelo() -> None:
+    """Happy: exactly 20% additive sits in the warning band [20, 25] → 'amarelo'."""
+    pct, flag = _calc_aditivo(1_000_000.0, 1_200_000.0)
+    assert pct == 20.0
+    assert flag == "amarelo"
+
+
+def test_aditivo_below_20_returns_verde() -> None:
+    """Happy: 10% additive is below the warning threshold → 'verde'."""
+    pct, flag = _calc_aditivo(1_000_000.0, 1_100_000.0)
+    assert pct == 10.0
+    assert flag == "verde"
+
+
+def test_aditivo_suppression_returns_verde() -> None:
+    """Edge: negative additive (value reduced via suppression) → 'verde'."""
+    pct, flag = _calc_aditivo(1_000_000.0, 900_000.0)
+    assert pct == -10.0
+    assert flag == "verde"
+
+
+@pytest.mark.parametrize(
+    "original, current",
+    [
+        (None, 1_200_000.0),   # original absent
+        (0.0, 1_200_000.0),    # original zero — would cause ZeroDivisionError
+        (-500.0, 1_200_000.0), # original negative — nonsensical
+        (1_000_000.0, None),   # current absent
+    ],
+)
+def test_aditivo_guard_returns_none_none(original: float | None, current: float | None) -> None:
+    """Edge: invalid inputs must return (None, None) without raising."""
+    pct, flag = _calc_aditivo(original, current)
+    assert pct is None
+    assert flag is None
