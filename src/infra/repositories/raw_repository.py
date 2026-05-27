@@ -304,35 +304,25 @@ def upsert_contrato(session: Session, id_projeto: str, row: dict[str, Any]) -> N
 
 INSERT_GEOMETRIA = text("""
     INSERT INTO raw.obrasgov_geometria (
-        id_unico, geometria_wkt, geometria_raw, data_criacao, origem,
-        data_metadado, info_adicionais, nome_area_executora,
-        endereco_area_executora, cep_area_executora, pais_area_executora,
-        payload_json
+        id_unico, geometria_wkt, geometria_raw
     ) VALUES (
-        :id_unico, :geometria_wkt, :geometria_raw, :data_criacao, :origem,
-        :data_metadado, :info_adicionais, :nome_area_executora,
-        :endereco_area_executora, :cep_area_executora, :pais_area_executora,
-        CAST(:payload_json AS jsonb)
+        :id_unico, :geometria_wkt, :geometria_raw
     )
+    ON CONFLICT (id_unico) DO UPDATE SET
+        geometria_wkt = EXCLUDED.geometria_wkt,
+        geometria_raw = EXCLUDED.geometria_raw,
+        ingestado_em  = NOW()
 """)
 
 
 def insert_geometria(session: Session, id_unico: str, row: dict[str, Any]) -> None:
+    wkt_value = row.get("geometria") or row.get("geometriaWkt") or row.get("wkt")
     session.execute(
         INSERT_GEOMETRIA,
         {
             "id_unico": id_unico,
-            "geometria_wkt": row.get("geometriaWkt"),
-            "geometria_raw": row.get("geometria"),
-            "data_criacao": row.get("dataCriacao"),
-            "origem": row.get("origem"),
-            "data_metadado": row.get("dataMetadado"),
-            "info_adicionais": row.get("infoAdicionais"),
-            "nome_area_executora": row.get("nomeAreaExecutora"),
-            "endereco_area_executora": row.get("enderecoAreaExecutora"),
-            "cep_area_executora": row.get("cepAreaExecutora"),
-            "pais_area_executora": row.get("paisAreaExecutora"),
-            "payload_json": _jsonb(row),
+            "geometria_wkt": wkt_value,
+            "geometria_raw": _jsonb(row),
         },
     )
 

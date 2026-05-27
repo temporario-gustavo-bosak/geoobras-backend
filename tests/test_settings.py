@@ -4,14 +4,14 @@ import pytest
 
 from src.config.settings import Settings
 
-_LLM_ENVVARS = ["LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "LLM_TIMEOUT", "LLM_MAX_TOKENS"]
-
-
 @pytest.fixture()
 def clean_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove every LLM env-var so Settings() reflects pure code defaults."""
-    for key in _LLM_ENVVARS:
-        monkeypatch.delenv(key, raising=False)
+    """Override LLM env-vars with code defaults so .env file values are ignored."""
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("LLM_MODEL", "claude-opus-4-7")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.anthropic.com/v1/messages")
+    monkeypatch.setenv("LLM_TIMEOUT", "60.0")
+    monkeypatch.setenv("LLM_MAX_TOKENS", "1024")
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ def test_llm_defaults_are_present(clean_llm_env: None) -> None:
 
 def test_settings_instantiate_without_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Settings() must not raise when LLM_API_KEY is absent from the environment."""
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "")  # override .env — setenv takes precedence over env_file
 
     s = Settings()  # must not raise
 

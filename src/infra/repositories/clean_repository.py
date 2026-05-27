@@ -74,7 +74,7 @@ def fetch_geometria_by_id_unico(session: Session) -> dict[str, dict]:
     sql = text("""
         SELECT DISTINCT ON (id_unico) *
         FROM raw.obrasgov_geometria
-        ORDER BY id_unico, data_criacao DESC NULLS LAST
+        ORDER BY id_unico, ingestado_em DESC NULLS LAST
     """)
     rows = session.execute(sql).mappings().all()
     return {r["id_unico"]: dict(r) for r in rows}

@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 from src.infra.repositories.analytics_repository import fetch_obras_para_analytics, upsert_metrica
 
-MIGRATION_PATH = Path(__file__).parents[2] / "sql" / "002_analytics_risco.sql"
-MIGRATION_FINANCIAL_HEALTH_PATH = Path(__file__).parents[2] / "sql" / "004_financial_health.sql"
-MIGRATION_IEC_PATH = Path(__file__).parents[2] / "sql" / "005_iec.sql"
+MIGRATION_PATH = Path(__file__).parents[2] / "sql" / "000_schema_completo_v2.sql"
+MIGRATION_FINANCIAL_HEALTH_PATH = Path(__file__).parents[2] / "sql" / "000_schema_completo_v2.sql"
+MIGRATION_IEC_PATH = Path(__file__).parents[2] / "sql" / "000_schema_completo_v2.sql"
 
 _FINANCIAL_HEALTH_COLUMNS = {
     "pct_aditivo",
