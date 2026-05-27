@@ -143,6 +143,61 @@ def _calc_dias_atraso(
 
 
 # ---------------------------------------------------------------------------
+# Índice de Eficiência Composta — IEC (0–100)
+# ---------------------------------------------------------------------------
+
+
+def _calc_iec(
+    risco_sobrecusto: float | None,
+    probabilidade_atraso: float | None,
+    pct_aditivo: float | None,
+    flag_risco_insolvencia: bool,
+) -> float | None:
+    """
+    Computes the Índice de Eficiência Composta (IEC) on a 0–100 scale.
+
+    IEC = max(0, round(100 - total_penalty, 1))
+
+    Penalty components (max 100 pts total):
+      risco_sobrecusto     → risco_sobrecusto (0..1) × 35             (max 35 pts)
+      probabilidade_atraso → probabilidade_atraso (0..1) × 30         (max 30 pts)
+      conformidade_aditivo → min(max(pct_aditivo, 0) / 25, 1.0) × 25 (max 25 pts)
+      insolvencia          → 10.0 if flag_risco_insolvencia else 0     (max 10 pts)
+
+    Rules:
+    - None inputs are skipped (no penalty for missing data).
+    - flag_risco_insolvencia=False contributes 0 penalty (not absent).
+    - Returns None when ALL inputs carry no signal (all None / flag False).
+    - The penalty components already sum to 100 at worst-case, so rescaling
+      is the identity (×100/100); the max(0, ...) clamp handles floating-point
+      edge cases.
+    """
+    if (
+        risco_sobrecusto is None
+        and probabilidade_atraso is None
+        and pct_aditivo is None
+        and not flag_risco_insolvencia
+    ):
+        return None
+
+    total_penalty = 0.0
+
+    if risco_sobrecusto is not None:
+        total_penalty += risco_sobrecusto * 35
+
+    if probabilidade_atraso is not None:
+        total_penalty += probabilidade_atraso * 30
+
+    if pct_aditivo is not None:
+        total_penalty += min(max(pct_aditivo, 0.0) / 25.0, 1.0) * 25
+
+    if flag_risco_insolvencia:
+        total_penalty += 10.0
+
+    return max(0.0, round(100.0 - total_penalty, 1))
+
+
+# ---------------------------------------------------------------------------
 # Z-score delay probability (population-level)
 # ---------------------------------------------------------------------------
 
@@ -368,6 +423,12 @@ def run_analytics() -> dict:
             prob = proba_map.get(id_obra)
             metrica["probabilidade_atraso"] = prob
             metrica["metodo_score"] = "heuristica_zscore_v1" if prob is not None else None
+            metrica["iec_score"] = _calc_iec(
+                metrica.get("risco_sobrecusto"),
+                prob,
+                metrica.get("pct_aditivo"),
+                metrica.get("flag_risco_insolvencia", False),
+            )
 
             upsert_metrica(session, metrica)
             counters["metricas"] += 1

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from src.services.analytics_service import _calc_aditivo, _calc_insolvencia, _calc_probabilidade_atraso
+from src.services.analytics_service import _calc_aditivo, _calc_iec, _calc_insolvencia, _calc_probabilidade_atraso
 
 
 # ---------------------------------------------------------------------------
@@ -240,3 +240,65 @@ def test_insolvencia_concluida_flag_false_regardless_of_projection() -> None:
     # projection values are still computed
     assert result["burn_rate_mensal_pct"] is not None
     assert result["meses_para_exaustao"] is not None
+
+
+# ---------------------------------------------------------------------------
+# T-02: _calc_iec
+# ---------------------------------------------------------------------------
+
+
+def test_calc_iec_all_worst_gives_zero() -> None:
+    """Happy path: all components at maximum penalty → IEC == 0.0."""
+    result = _calc_iec(
+        risco_sobrecusto=1.0,
+        probabilidade_atraso=1.0,
+        pct_aditivo=50.0,
+        flag_risco_insolvencia=True,
+    )
+    assert result == 0.0
+
+
+def test_calc_iec_all_best_gives_100() -> None:
+    """Happy path: all components at zero penalty → IEC == 100.0."""
+    result = _calc_iec(
+        risco_sobrecusto=0.0,
+        probabilidade_atraso=0.0,
+        pct_aditivo=0.0,
+        flag_risco_insolvencia=False,
+    )
+    assert result == 100.0
+
+
+def test_calc_iec_partial_only_risco_sobrecusto() -> None:
+    """Partial: only risco_sobrecusto=0.5 present, rest None/False → IEC == 82.5."""
+    result = _calc_iec(
+        risco_sobrecusto=0.5,
+        probabilidade_atraso=None,
+        pct_aditivo=None,
+        flag_risco_insolvencia=False,
+    )
+    assert result == 82.5
+
+
+def test_calc_iec_all_none_false_returns_none() -> None:
+    """Edge: all inputs carry no signal → None (no score)."""
+    result = _calc_iec(
+        risco_sobrecusto=None,
+        probabilidade_atraso=None,
+        pct_aditivo=None,
+        flag_risco_insolvencia=False,
+    )
+    assert result is None
+
+
+def test_calc_iec_clamp_never_below_zero_or_above_100() -> None:
+    """Edge: IEC is always in [0, 100] regardless of extreme inputs."""
+    # pct_aditivo=1000 → capped at 25 pts by formula; total penalty = 100 → IEC = 0
+    at_floor = _calc_iec(1.0, 1.0, 1000.0, True)
+    assert at_floor == 0.0
+    assert at_floor >= 0.0
+
+    # Negative pct_aditivo (contract reduction) → 0 additive penalty; IEC = 100
+    at_ceiling = _calc_iec(0.0, 0.0, -50.0, False)
+    assert at_ceiling == 100.0
+    assert at_ceiling <= 100.0
