@@ -55,6 +55,9 @@ UPSERT_METRICA = text("""
         dias_atraso, flag_possivel_atraso,
         divergencia_fisico_financeira, risco_sobrecusto,
         probabilidade_atraso, classe_alerta, metodo_score,
+        pct_aditivo, flag_alerta_aditivo,
+        burn_rate_mensal_pct, meses_para_exaustao,
+        pct_fisico_estimado_exaustao, flag_risco_insolvencia,
         calculado_em
     ) VALUES (
         :id_obra,
@@ -64,6 +67,9 @@ UPSERT_METRICA = text("""
         :dias_atraso, :flag_atraso,
         :divergencia, :risco_sobrecusto,
         :prob_atraso, :classe_alerta, :metodo_score,
+        :pct_aditivo, :flag_alerta_aditivo,
+        :burn_rate_mensal_pct, :meses_para_exaustao,
+        :pct_fisico_estimado_exaustao, :flag_risco_insolvencia,
         NOW()
     )
     ON CONFLICT (id_obra_geoobras) DO UPDATE SET
@@ -78,6 +84,12 @@ UPSERT_METRICA = text("""
         probabilidade_atraso           = EXCLUDED.probabilidade_atraso,
         classe_alerta                  = EXCLUDED.classe_alerta,
         metodo_score                   = EXCLUDED.metodo_score,
+        pct_aditivo                    = EXCLUDED.pct_aditivo,
+        flag_alerta_aditivo            = EXCLUDED.flag_alerta_aditivo,
+        burn_rate_mensal_pct           = EXCLUDED.burn_rate_mensal_pct,
+        meses_para_exaustao            = EXCLUDED.meses_para_exaustao,
+        pct_fisico_estimado_exaustao   = EXCLUDED.pct_fisico_estimado_exaustao,
+        flag_risco_insolvencia         = EXCLUDED.flag_risco_insolvencia,
         calculado_em                   = NOW()
 """)
 
@@ -101,6 +113,12 @@ def upsert_metrica(session: Session, m: dict[str, Any]) -> None:
             "prob_atraso": m.get("probabilidade_atraso"),
             "classe_alerta": m.get("classe_alerta"),
             "metodo_score": m.get("metodo_score"),
+            "pct_aditivo": m.get("pct_aditivo"),
+            "flag_alerta_aditivo": m.get("flag_alerta_aditivo"),
+            "burn_rate_mensal_pct": m.get("burn_rate_mensal_pct"),
+            "meses_para_exaustao": m.get("meses_para_exaustao"),
+            "pct_fisico_estimado_exaustao": m.get("pct_fisico_estimado_exaustao"),
+            "flag_risco_insolvencia": m.get("flag_risco_insolvencia", False),
         },
     )
 
