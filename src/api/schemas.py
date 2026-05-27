@@ -113,6 +113,14 @@ class ObraDetalhe(BaseModel):
     flag_possivel_atraso: Optional[bool] = Field(
         None, description="True quando a obra ultrapassou o prazo contratual previsto"
     )
+    iec_score: Optional[float] = Field(
+        None,
+        description=(
+            "Índice de Eficiência Composta (0–100). "
+            "100 = máxima eficiência. Calculado a partir de risco financeiro, atraso e aditivos."
+        ),
+        examples=[72.5],
+    )
     metricas_calculado_em: Optional[datetime] = None
     fonte_principal: Optional[str] = None
     data_ultima_atualizacao: Optional[datetime] = None
@@ -172,6 +180,11 @@ class InsightResponse(BaseModel):
         ...,
         description="Sinalizadores de alerta extraídos dos dados da obra",
         examples=[{"possivel_atraso": True, "data_fim_pendente": False, "dias_atraso": 45}],
+    )
+    iec_score: Optional[float] = Field(
+        None,
+        description="Índice de Eficiência Composta (0–100) da obra no momento da geração do insight.",
+        examples=[72.5],
     )
     fonte: Literal["llm", "fallback"] = Field(
         ...,

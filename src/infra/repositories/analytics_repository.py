@@ -283,7 +283,8 @@ def fetch_obra_insights(session: Session, id_obra: str) -> dict | None:
             m.burn_rate_mensal_pct,
             m.meses_para_exaustao,
             m.pct_fisico_estimado_exaustao,
-            m.flag_risco_insolvencia
+            m.flag_risco_insolvencia,
+            m.iec_score
         FROM clean.obras o
         LEFT JOIN analytics.metricas_obra m ON m.id_obra_geoobras = o.id_obra_geoobras
         WHERE o.id_obra_geoobras = :id
@@ -296,6 +297,7 @@ def query_obra_detalhe(session: Session, id_obra: str) -> dict | None:
     sql = text("""
         SELECT o.*,
                m.percentual_desembolso, m.dias_atraso, m.flag_possivel_atraso,
+               m.iec_score,
                m.calculado_em AS metricas_calculado_em
         FROM clean.obras o
         LEFT JOIN analytics.metricas_obra m ON m.id_obra_geoobras = o.id_obra_geoobras

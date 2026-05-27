@@ -36,7 +36,8 @@ _SYSTEM_PROMPT = (
     "5. Se houver alerta de atraso, mencione-o explicitamente com o número de dias.\n"
     "6. Responda exclusivamente em português do Brasil, linguagem técnica e objetiva.\n"
     "7. Não emita julgamentos jurídicos nem recomendações sem base direta nos dados.\n"
-    "8. Limite a resposta a 3–4 parágrafos concisos."
+    "8. Limite a resposta a 3–4 parágrafos concisos.\n"
+    "9. Se o IEC (Índice de Eficiência Composta) for inferior a 40, classifique a obra como crítica."
 )
 
 _SYSTEM_PROMPT_CIDADAO = (
@@ -54,7 +55,9 @@ _SYSTEM_PROMPT_CIDADAO = (
     "'com o ritmo atual de gastos, o orçamento pode se esgotar antes de a obra ser concluída'.\n"
     "6. Use linguagem simples, direta e acessível ao público geral. Evite jargão técnico e termos de auditoria.\n"
     "7. Não faça julgamentos jurídicos nem acusações sem base direta nos dados.\n"
-    "8. Limite a resposta a 3–4 parágrafos curtos."
+    "8. Limite a resposta a 3–4 parágrafos curtos.\n"
+    "9. Use o IEC fornecido na mensagem do usuário para contextualizar: "
+    "'O IEC desta obra é {score}/100 — quanto menor, mais problemas foram identificados.'"
 )
 
 
@@ -95,6 +98,7 @@ def _build_user_message(obra: dict) -> str:
     meses_exaustao: float | None = obra.get("meses_para_exaustao")
     pct_fisico_exaustao: float | None = obra.get("pct_fisico_estimado_exaustao")
     flag_insolvencia: bool | None = obra.get("flag_risco_insolvencia")
+    iec_score: float | None = obra.get("iec_score")
 
     div_str = (
         f"Divergência físico-financeira: {divergencia:+.1f} p.p. (positivo = desembolso à frente da execução física)"
@@ -132,6 +136,7 @@ def _build_user_message(obra: dict) -> str:
         f"Valor pago acumulado: R$ {valor_pago:,.2f}" if valor_pago is not None else "Valor pago: N/D",
         aditivo_str,
         insolvencia_str,
+        f"IEC (Índice de Eficiência Composta): {iec_score:.1f}/100" if iec_score is not None else "IEC: N/D",
     ]
     return "\n".join(linhas)
 
@@ -179,6 +184,10 @@ def _build_fallback(obra: dict) -> dict:
             f"Risco de insolvência: orçamento estimado para esgotar em {meses_exaustao:.1f} meses,"
             f" com obra em ~{pct_fisico_exaustao:.1f}% físico."
         )
+
+    iec_score: float | None = obra.get("iec_score")
+    if iec_score is not None:
+        partes.append(f"IEC (Índice de Eficiência Composta): {iec_score:.1f}/100.")
 
     return {
         "resumo": " ".join(partes),
@@ -228,6 +237,12 @@ def _build_fallback_cidadao(obra: dict) -> dict:
         partes.append(
             f"Com o ritmo atual de gastos, o orçamento pode se esgotar em cerca de "
             f"{meses_exaustao:.1f} meses, antes de a obra ser concluída."
+        )
+
+    iec_score: float | None = obra.get("iec_score")
+    if iec_score is not None:
+        partes.append(
+            f"O IEC desta obra é {iec_score:.1f}/100 — quanto menor, mais problemas foram identificados."
         )
 
     return {

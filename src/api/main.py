@@ -327,6 +327,7 @@ def get_obra_insights(
     return InsightResponse(
         resumo=insight.get("resumo", ""),
         flags=flags,
+        iec_score=obra.get("iec_score"),
         fonte=insight.get("fonte", "fallback"),
         gerado_em=datetime.now(),
     )

@@ -390,3 +390,25 @@ def test_build_fallback_cidadao_null_fields_returns_fallback_fonte() -> None:
 
     assert result["fonte"] == "fallback"
     assert isinstance(result["resumo"], str) and result["resumo"]
+
+
+# ---------------------------------------------------------------------------
+# T-03: IEC in user message
+# ---------------------------------------------------------------------------
+
+
+def test_build_user_message_contains_iec_when_score_provided() -> None:
+    """Happy: _build_user_message must include the IEC line when iec_score is present."""
+    obra = {**_mock_obra(), "iec_score": 72.5}
+    msg = _build_user_message(obra)
+
+    assert "IEC" in msg
+    assert "72.5/100" in msg
+
+
+def test_build_user_message_contains_nd_for_iec_when_score_is_none() -> None:
+    """Edge: _build_user_message must render 'IEC: N/D' when iec_score is None."""
+    obra = {**_mock_obra(), "iec_score": None}
+    msg = _build_user_message(obra)
+
+    assert "IEC: N/D" in msg

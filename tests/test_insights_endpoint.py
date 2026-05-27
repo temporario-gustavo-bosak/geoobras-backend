@@ -212,3 +212,33 @@ def test_insights_invalid_persona_returns_422(client: TestClient) -> None:
     """Edge: unknown persona value → FastAPI Enum validation returns 422."""
     response = client.get(f"/api/v1/obras/{VALID_ID}/insights?persona=xpto")
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# T-03: iec_score surfaced in obra detail and insights responses
+# ---------------------------------------------------------------------------
+
+
+def test_obra_detalhe_response_includes_iec_score(client: TestClient) -> None:
+    """Happy path: /obras/{id} response must contain iec_score when the mock provides it."""
+    obra_data = {
+        "id_obra_geoobras": VALID_ID,
+        "nome": "Pavimentação Av. Beira-Mar",
+        "status_obra": "em_execucao",
+        "flag_data_fim_pendente": False,
+        "flag_populacao_suspeita": False,
+        "flag_empregos_suspeitos": False,
+        "dias_atraso": 30,
+        "flag_possivel_atraso": True,
+        "iec_score": 65.3,
+        "contratos": [],
+        "convenios": [],
+    }
+
+    with patch("src.api.main.query_obra_detalhe", return_value=obra_data):
+        response = client.get(f"/api/v1/obras/{VALID_ID}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "iec_score" in body
+    assert body["iec_score"] == 65.3
