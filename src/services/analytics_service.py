@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def _calc_pct_desembolso(valor_contratado: float | None, valor_pago: float | None) -> float | None:
     if valor_contratado and valor_contratado > 0 and valor_pago is not None:
-        return round(valor_pago / valor_contratado * 100, 2)
+        return round(float(valor_pago) / float(valor_contratado) * 100, 2)
     return None
 
 
@@ -42,7 +42,7 @@ def _calc_aditivo(
     """
     if valor_previsto_original is None or valor_previsto_original <= 0 or valor_total_contratado is None:
         return None, None
-    pct = round((valor_total_contratado - valor_previsto_original) / valor_previsto_original * 100, 2)
+    pct = round((float(valor_total_contratado) - float(valor_previsto_original)) / float(valor_previsto_original) * 100, 2)
     if pct < 20:
         flag = "verde"
     elif pct <= 25:
@@ -81,6 +81,8 @@ def _calc_insolvencia(
     if data_inicio is None or percentual_desembolso is None or percentual_fisico is None:
         return _null
 
+    percentual_desembolso = float(percentual_desembolso)
+    percentual_fisico = float(percentual_fisico)
     elapsed_months = (date.today() - data_inicio).days / 30.44
     if elapsed_months <= 0:
         return _null
@@ -238,11 +240,11 @@ def _build_recorrencia_map(
 
     for obra in obras:
         id_obra = str(obra["id_obra_geoobras"])
-        lat: float | None = obra.get("latitude")
-        lon: float | None = obra.get("longitude")
+        lat_raw = obra.get("latitude")
+        lon_raw = obra.get("longitude")
         result[id_obra] = 0
-        if lat is not None and lon is not None:
-            com_coords.append((id_obra, lat, lon))
+        if lat_raw is not None and lon_raw is not None:
+            com_coords.append((id_obra, float(lat_raw), float(lon_raw)))
 
     for i, (id_a, lat_a, lon_a) in enumerate(com_coords):
         for id_b, lat_b, lon_b in com_coords[i + 1:]:
@@ -345,8 +347,8 @@ def _calc_recorrencia(
 
     for obra in obras:
         id_obra = obra["id_obra_geoobras"]
-        lat: float | None = obra.get("latitude")
-        lon: float | None = obra.get("longitude")
+        lat_raw = obra.get("latitude")
+        lon_raw = obra.get("longitude")
 
         result[id_obra] = {
             "bairro": obra.get("bairro"),
@@ -358,8 +360,9 @@ def _calc_recorrencia(
             "janela_anos": janela_anos,
         }
 
-        if lat is not None and lon is not None:
-            com_coords.append(obra)
+        if lat_raw is not None and lon_raw is not None:
+            # Store float copies so downstream Haversine math never receives Decimal
+            com_coords.append({**obra, "latitude": float(lat_raw), "longitude": float(lon_raw)})
         else:
             logger.warning(
                 "recorrencia: obra %s excluída do cálculo espacial (sem coordenadas)",
