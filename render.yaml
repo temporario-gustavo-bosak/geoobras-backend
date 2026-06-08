@@ -1,0 +1,60 @@
+# 1. Definição do Banco de Dados PostgreSQL
+databases:
+  - name: geoobras-db
+    plan: free
+    databaseName: geoobras
+    user: geoobras
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: Permite conexao da API e externa
+
+# 2. Definição dos Serviços (API FastAPI)
+services:
+  - type: web
+    name: geoobras-api
+    plan: free
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: geoobras-db
+          property: connectionString
+
+      # Configurações do ObrasGov.br
+      - key: OBRASGOV_BASE_URL
+        value: "https://api.obrasgov.gestao.gov.br/obrasgov/api"
+      - key: OBRASGOV_UF
+        value: "RJ"
+      - key: OBRASGOV_PAGE_SIZE
+        value: "20"
+      - key: OBRASGOV_MUNICIPIO_ALVO
+        value: "Macaé"
+      - key: OBRASGOV_MAX_PAGES
+        value: "1000"
+
+      # Configurações do TCE-RJ
+      - key: TCERJ_BASE_URL
+        value: "https://dados.tcerj.tc.br/api/v1"
+      - key: TCERJ_PAGE_SIZE
+        value: "1000"
+      - key: TCERJ_MAX_PAGES
+        value: "1000"
+
+      # Configurações Gerais e Múltiplas
+      - key: CONVENIOS_DIR
+        value: "data/input/macae_convenios"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: HTTP_TIMEOUT
+        value: "90"
+      - key: HTTP_MAX_RETRIES
+        value: "3"
+
+      # Configurações da LLM (Groq / Anthropic)
+      - key: LLM_MODEL
+        value: "llama3-70b-8192"
+      - key: LLM_BASE_URL
+        value: "https://api.groq.com/openai/v1/chat/completions"
+      - key: LLM_MAX_TOKENS
+        value: "1024"
